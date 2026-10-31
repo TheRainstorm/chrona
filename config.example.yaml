@@ -1,0 +1,60 @@
+version: 3
+timezone: Asia/Shanghai
+jitter_seconds: 45
+policies:
+  - id: fine
+    label: 精细保留
+    start_at: "2026-11-01T00:00:00+08:00"
+    keep: {quarter_hourly: 96, hourly: 72, daily: 35, weekly: 8, monthly: 12}
+  - id: ssd
+    label: SSD 轻量保护
+    start_at: "2026-11-01T00:00:00+08:00"
+    keep: {quarter_hourly: 4, hourly: 12, daily: 7, weekly: 4, monthly: 3}
+# 只配置父级，已有和新增子数据集默认继承。
+datasets:
+  - name: Saturn
+    policy: fine
+  # 本级覆盖；Immich 的后代默认继承这组规则。
+  - name: Saturn/APP/Immich
+    snapshot:
+      start_at: "2026-11-01T00:00:00+08:00"
+      keep: {quarter_hourly: 12, hourly: 24, daily: 7, weekly: 4, monthly: 12}
+  - name: rpool/data
+    policy: ssd
+  # 显式停止这个分支的继承。
+  - name: Saturn/Temporary
+    snapshot_mode: none
+backups:
+  - id: ares-saturn
+    name: Ares 系统与应用
+    host: nas-pve
+    port: 2202
+    cadence: weekly
+    weekdays: [1, 5]
+    month_day: 1
+    at: "05:45"
+    enabled: true
+    keep_weekly: 8
+    keep_monthly: 12
+    grace_minutes: 60
+    datasets:
+      - source: rpool/data/vm-201-ares-root
+        destination: Saturn/backup/ares-root
+      - source: rpool/data/vm-201-ares-docker
+        destination: Saturn/backup/ares-docker
+  # 父级保存目的前缀，仅对其叶子节点传输。
+  - id: app-vault
+    name: 应用备份默认规则
+    host: backup-nas
+    port: 22
+    cadence: weekly
+    weekdays: [0]
+    month_day: 1
+    at: "04:00"
+    enabled: true
+    keep_weekly: 4
+    keep_monthly: 12
+    grace_minutes: 60
+    datasets:
+      - source: Saturn/APP
+        destination: vault/APP

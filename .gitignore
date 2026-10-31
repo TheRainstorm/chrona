@@ -1,0 +1,18 @@
+/bin/
+/data/
+/artifacts/
+/node_modules/
+
+# Local caches and temporary files
+__pycache__/
+*.py[cod]
+*.log
+.DS_Store
+
+# Deployment credentials and local environment
+.env
+.env.*
+!.env.example
+web-password
+*.key
+*.pem

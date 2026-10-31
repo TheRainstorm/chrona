@@ -1,0 +1,34 @@
+[Unit]
+Description=Chrona ZFS snapshots and replication
+Wants=network-online.target
+After=network-online.target zfs-import.target zfs-mount.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=/var/lib/chrona
+ExecStart=/opt/chrona/current/chrona -mode zfs -enable-zfs-writes -listen 192.168.35.253:8086 -config /etc/chrona/config.yaml -state /var/lib/chrona/state.json -auth-file /etc/chrona/web-password -ssh-control-dir /run/chrona/ssh
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=90
+KillMode=control-group
+RuntimeDirectory=chrona
+RuntimeDirectoryMode=0700
+StateDirectory=chrona
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/etc/chrona /var/lib/chrona /run/chrona
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

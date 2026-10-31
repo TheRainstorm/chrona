@@ -310,7 +310,7 @@ func (a *App) startBackupLocked(b Backup) error {
 			continue
 		}
 		if !a.config.IsLeafDataset(binding.Source, a.datasets...) {
-			return errors.New("只有叶子数据集可以执行备份；父级仅保存继承规则")
+			return errors.New("只有叶子数据集可以执行备份；父级只用于层级展示")
 		}
 		active = append(active, binding)
 	}
@@ -387,7 +387,6 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/state", a.handleState)
 	mux.HandleFunc("GET /api/snapshots", a.handleSnapshots)
 	mux.HandleFunc("GET /api/dataset-plan", a.handleDatasetPlan)
-	mux.HandleFunc("GET /api/backup-inheritance", a.handleBackupInheritance)
 	mux.HandleFunc("GET /api/logs", func(w http.ResponseWriter, r *http.Request) {
 		a.mu.RLock()
 		defer a.mu.RUnlock()
@@ -414,12 +413,13 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/backups/{id}", a.handleDeleteBackup)
 	mux.HandleFunc("POST /api/backups/{id}/run", a.handleRunBackup)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "mode": a.opts.Mode, "version": "0.6.0"})
+		writeJSON(w, 200, map[string]string{"status": "ok", "mode": a.opts.Mode, "version": "0.7.0"})
 	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return authorize(a.opts.AuthSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")

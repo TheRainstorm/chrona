@@ -42,9 +42,9 @@ backups:
         destination: Saturn/backup/ares-root
       - source: rpool/data/vm-201-ares-docker
         destination: Saturn/backup/ares-docker
-  # 父级保存目的前缀，仅对其叶子节点传输。
+  # 备份按源数据集显式绑定，不会从父级继承。
   - id: app-vault
-    name: 应用备份默认规则
+    name: 应用备份公共规则
     host: backup-nas
     port: 22
     cadence: weekly
@@ -56,5 +56,7 @@ backups:
     keep_monthly: 12
     grace_minutes: 60
     datasets:
-      - source: Saturn/APP
-        destination: vault/APP
+      - source: Saturn/APP/Immich
+        destination: vault/APP/Immich
+      - source: Saturn/APP/Seafile
+        destination: vault/APP/Seafile

@@ -1,8 +1,6 @@
 package chrona
 
 import (
-	"errors"
-	"net/http"
 	"strings"
 	"time"
 )
@@ -13,7 +11,7 @@ type ResolvedBackup struct {
 	Origin  string
 }
 
-// Path nodes may own defaults, but only actual leaves are transfer sources.
+// Hierarchy does not imply a plan; only explicitly assigned leaves are transfer sources.
 func (c Config) IsLeafDataset(name string, inventory ...Dataset) bool {
 	prefix := name + "/"
 	for _, d := range inventory {
@@ -29,41 +27,26 @@ func (c Config) IsLeafDataset(name string, inventory ...Dataset) bool {
 	return true
 }
 
-// The nearest level with explicit destinations overrides all inherited targets.
+// A backup plan is bound only to the dataset named in its source mapping.
+// Hierarchy is presentation only; neither rules nor destination paths inherit.
 func (c Config) ResolveBackups(name string) []ResolvedBackup {
-	byName := c.datasetIndex()
-	for candidate := name; candidate != ""; candidate = parentDataset(candidate) {
-		if byName[candidate].BackupMode == "none" {
-			return nil
-		}
-		result := []ResolvedBackup{}
-		for _, task := range c.Backups {
-			for _, binding := range task.Datasets {
-				if binding.Source != candidate {
-					continue
-				}
-				relative := strings.TrimPrefix(name, candidate)
-				result = append(result, ResolvedBackup{Task: task, Binding: BackupDataset{Source: name, Destination: binding.Destination + relative, Disabled: binding.Disabled}, Origin: candidate})
+	result := []ResolvedBackup{}
+	for _, task := range c.Backups {
+		for _, binding := range task.Datasets {
+			if binding.Source == name {
+				result = append(result, ResolvedBackup{Task: task, Binding: binding, Origin: name})
 			}
 		}
-		if len(result) > 0 {
-			return result
-		}
 	}
-	return nil
+	return result
 }
 
 func (c Config) EffectiveBackup(task Backup, inventory ...Dataset) Backup {
 	result := task
 	result.Datasets = []BackupDataset{}
-	for _, d := range c.ManagedDatasets(inventory...) {
-		if !c.IsLeafDataset(d.Name, inventory...) {
-			continue
-		}
-		for _, resolved := range c.ResolveBackups(d.Name) {
-			if resolved.Task.ID == task.ID {
-				result.Datasets = append(result.Datasets, resolved.Binding)
-			}
+	for _, binding := range task.Datasets {
+		if c.IsLeafDataset(binding.Source, inventory...) {
+			result.Datasets = append(result.Datasets, binding)
 		}
 	}
 	return result
@@ -141,35 +124,4 @@ func initializeDemoReplicas(c Config, s *State, inventory []Dataset, now time.Ti
 			}
 		}
 	}
-}
-
-// Show the inherited targets that would apply after clearing this level.
-func (a *App) handleBackupInheritance(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("dataset")
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	if !datasetPattern.MatchString(name) || !a.config.IsManagedDataset(name) {
-		fail(w, 404, errors.New("数据集尚未纳入管理"))
-		return
-	}
-	c := NormalizeConfig(a.config)
-	for i := range c.Datasets {
-		if c.Datasets[i].Name == name {
-			c.Datasets[i].BackupMode = ""
-		}
-	}
-	for i := range c.Backups {
-		bindings := []BackupDataset{}
-		for _, binding := range c.Backups[i].Datasets {
-			if binding.Source != name {
-				bindings = append(bindings, binding)
-			}
-		}
-		c.Backups[i].Datasets = bindings
-	}
-	items := []map[string]any{}
-	for _, resolved := range c.ResolveBackups(name) {
-		items = append(items, map[string]any{"task": resolved.Task, "origin": resolved.Origin, "destination": resolved.Binding.Destination, "disabled": resolved.Binding.Disabled})
-	}
-	writeJSON(w, 200, map[string]any{"dataset": name, "items": items})
 }

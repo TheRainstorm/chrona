@@ -7,41 +7,37 @@ import (
 	"time"
 )
 
-func TestBackupInheritanceExpandsOnlyLeavesAndAppendsRelativePaths(t *testing.T) {
+func TestBackupPlansDoNotInheritOrExpandDestinationPaths(t *testing.T) {
 	c := inheritanceConfig()
 	c.Datasets = []DatasetConfig{{Name: "tank/home", Policy: "test"}}
 	task := DefaultConfig(time.Now()).Backups[0]
 	task.Datasets = []BackupDataset{{Source: "tank/home/apps", Destination: "remote/apps"}}
 	c.Backups = []Backup{task}
-	inventory := []Dataset{{Name: "tank/home"}, {Name: "tank/home/apps"}, {Name: "tank/home/apps/photos"}, {Name: "tank/home/apps/docs"}, {Name: "tank/home/apps-other"}}
-	b := c.EffectiveBackup(task, inventory...)
-	if len(b.Datasets) != 2 {
-		t.Fatal("only leaves under the exact source path may be sent", b.Datasets)
+	inventory := []Dataset{{Name: "tank/home"}, {Name: "tank/home/apps"}, {Name: "tank/home/apps/photos"}, {Name: "tank/home/apps/docs"}}
+	if len(c.ResolveBackups("tank/home/apps/photos")) != 0 {
+		t.Fatal("child inherited its parent's plan")
 	}
-	for _, binding := range b.Datasets {
-		if binding.Destination != "remote/apps/"+strings.TrimPrefix(binding.Source, "tank/home/apps/") {
-			t.Fatal("relative target path lost", binding)
-		}
-	}
-	override := task
-	override.ID = "override"
-	override.Host = "other-host"
-	override.Datasets = []BackupDataset{{Source: "tank/home/apps/photos", Destination: "other/photos"}}
-	c.Backups = append(c.Backups, override)
-	if resolved := c.ResolveBackups("tank/home/apps/photos"); len(resolved) != 1 || resolved[0].Task.ID != "override" {
-		t.Fatal("child destinations must override parent destinations", resolved)
-	}
-	c.Datasets = append(c.Datasets, DatasetConfig{Name: "tank/home/apps/docs", BackupMode: "none"})
 	if len(c.EffectiveBackup(task, inventory...).Datasets) != 0 {
-		t.Fatal("explicit exclusion did not stop inherited backup")
+		t.Fatal("parent mapping expanded into child transfers")
 	}
-	if len(c.EffectiveBackup(override, inventory...).Datasets) != 1 {
-		t.Fatal("other child override was removed")
+	task.Datasets = append(task.Datasets, BackupDataset{Source: "tank/home/apps/photos", Destination: "remote/my-photos"})
+	c.Backups[0] = task
+	resolved := c.ResolveBackups("tank/home/apps/photos")
+	if len(resolved) != 1 || resolved[0].Origin != "tank/home/apps/photos" || resolved[0].Binding.Destination != "remote/my-photos" {
+		t.Fatal("explicit destination changed", resolved)
 	}
-	c.Datasets = c.Datasets[:1]
-	c.Backups = c.Backups[:1]
-	if len(c.EffectiveBackup(task, inventory...).Datasets) != 2 {
-		t.Fatal("clearing local settings did not restore inheritance")
+	b := c.EffectiveBackup(task, inventory...)
+	if len(b.Datasets) != 1 || b.Datasets[0].Source != "tank/home/apps/photos" {
+		t.Fatal("only the explicitly assigned leaf may be sent", b.Datasets)
+	}
+	c.Datasets = append(c.Datasets, DatasetConfig{Name: "tank/home/apps/photos", BackupMode: "none"})
+	c = NormalizeConfig(c)
+	if len(c.ResolveBackups("tank/home/apps/photos")) != 1 || c.Datasets[1].BackupMode != "" {
+		t.Fatal("obsolete inheritance settings affected a direct plan")
+	}
+	inventory = append(inventory, Dataset{Name: "tank/home/apps/photos/2026"})
+	if len(c.EffectiveBackup(task, inventory...).Datasets) != 0 || len(c.ResolveBackups("tank/home/apps/photos/2026")) != 0 {
+		t.Fatal("a newly discovered child must not be backed up automatically")
 	}
 	if err := ValidateConfig(c); err != nil {
 		t.Fatal(err)

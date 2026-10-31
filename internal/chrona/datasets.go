@@ -18,7 +18,7 @@ type DatasetConfig struct {
 	Policy       string            `json:"policy,omitempty" yaml:"policy,omitempty"`
 	Snapshot     *SnapshotSettings `json:"snapshot,omitempty" yaml:"snapshot,omitempty"`
 	SnapshotMode string            `json:"snapshot_mode,omitempty" yaml:"snapshot_mode,omitempty"`
-	BackupMode   string            `json:"backup_mode,omitempty" yaml:"backup_mode,omitempty"`
+	BackupMode   string            `json:"-" yaml:"backup_mode,omitempty"`
 }
 
 func localPolicyID(dataset string) string {
@@ -34,6 +34,10 @@ func NormalizeConfig(c Config) Config {
 	r.Backups = append([]Backup{}, c.Backups...)
 	r.Datasets = append([]DatasetConfig{}, c.Datasets...)
 	for i := range r.Datasets {
+		// Accept old files without retaining obsolete backup inheritance settings.
+		if r.Datasets[i].BackupMode == "inherit" || r.Datasets[i].BackupMode == "none" {
+			r.Datasets[i].BackupMode = ""
+		}
 		if r.Datasets[i].Snapshot != nil {
 			s := *r.Datasets[i].Snapshot
 			r.Datasets[i].Snapshot = &s
@@ -73,17 +77,8 @@ func NormalizeConfig(c Config) Config {
 }
 
 func validateDatasetConfig(c Config, d DatasetConfig) error {
-	if d.BackupMode != "" && d.BackupMode != "inherit" && d.BackupMode != "none" {
-		return errors.New("backup_mode 只能是 inherit 或 none")
-	}
 	if d.BackupMode != "" {
-		for _, b := range c.Backups {
-			for _, binding := range b.Datasets {
-				if binding.Source == d.Name {
-					return errors.New("备份继承或停止继承时不能同时设置本级目的地")
-				}
-			}
-		}
+		return errors.New("backup_mode 已废弃，请直接为数据集设置备份计划")
 	}
 	if d.SnapshotMode != "" && d.SnapshotMode != "inherit" && d.SnapshotMode != "none" {
 		return errors.New("snapshot_mode 只能是 inherit 或 none")

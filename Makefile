@@ -1,4 +1,4 @@
-.PHONY: build run test
+.PHONY: build run test release
 
 build:
 	go build -trimpath -ldflags="-s -w" -o bin/chrona ./cmd/chrona
@@ -8,3 +8,6 @@ run: build
 
 test:
 	go test -race ./...
+
+release:
+	./scripts/release.sh "$(VERSION)"

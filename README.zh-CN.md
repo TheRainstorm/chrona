@@ -6,6 +6,11 @@
 
 Chrona 是一个 Go 可执行文件，内置 HTML/CSS/JavaScript 界面，无需数据库、Node.js 运行时、容器或外部 CDN。唯一的第三方 Go 依赖是 YAML 解析器，目前 Web 界面使用简体中文。
 
+## 核心原理
+
+- **快照把“保留几个”换算成到期时间。** 每档按“间隔 × 保留数量”计算，写入唯一的 `chrona:expires` 属性，月档按真实日历计算。多档同时触发只创建一张快照，由最长档决定期限，同时覆盖短档；清理时检查是否到期，保留 `keep` 和受保护的备份基点。
+- **备份保住两端共同的增量基点。** `zfs send -i` 从两端共有的快照 GUID 出发，只传变化的数据块。新备份快照的两端期限都是“下次备份时间 + 缓冲”，延迟或失败时由 hold 继续保护旧基点，验证新备份成功后才替换。因此，本地快照再频繁，也不会把增量链清掉。
+
 ## 能做什么
 
 - **快照管理**：一行显示完整数据集路径、策略名、各档保留数量、上次快照和下次时间，直接查看历史、预览计划、编辑、暂停或创建快照。
@@ -24,47 +29,81 @@ Chrona 是一个 Go 可执行文件，内置 HTML/CSS/JavaScript 界面，无需
 
 ![Chrona 备份管理界面](docs/images/backups.png)
 
-## 先试用 Demo
+## 安装 Linux 预编译版本
+
+从 [Releases](https://github.com/TheRainstorm/chrona/releases) 下载：x86_64 选 `amd64`，aarch64 选 `arm64`。压缩包内含单文件程序、systemd 服务文件、示例配置、文档和许可证。目标机器需要 Linux、OpenZFS 工具（`zfs`、`zpool`）、systemd，远端备份还需要 SSH 客户端；无需安装 Go。
+
+```sh
+chrona_version=0.11.0
+chrona_arch=amd64                 # ARM 机器改为 arm64
+chrona_archive="chrona_${chrona_version}_linux_${chrona_arch}.tar.gz"
+chrona_url="https://github.com/TheRainstorm/chrona/releases/download/v${chrona_version}"
+curl -fLO "$chrona_url/$chrona_archive" &&
+curl -fLO "$chrona_url/SHA256SUMS" &&
+sha256sum --ignore-missing -c SHA256SUMS &&
+tar -xzf "$chrona_archive" &&
+cd "chrona_${chrona_version}_linux_${chrona_arch}" &&
+./chrona -version
+```
+
+私有 fork 可使用已登录的 `gh release download` 下载。若想先体验界面，运行 `./chrona -listen 127.0.0.1:8086`，打开 [localhost:8086](http://127.0.0.1:8086)；默认 Demo 使用模拟数据，不操作 ZFS。
+
+首次安装 systemd 服务：
+
+```sh
+sudo install -d -m 755 "/opt/chrona/releases/$chrona_version"
+sudo install -m 755 chrona "/opt/chrona/releases/$chrona_version/chrona"
+sudo ln -sfn "/opt/chrona/releases/$chrona_version" /opt/chrona/current
+sudo install -d -m 700 /etc/chrona /var/lib/chrona
+sudo test -f /etc/chrona/config.yaml || sudo install -m 600 config.example.yaml /etc/chrona/config.yaml
+sudoedit /etc/chrona/config.yaml
+sudo sh -c 'umask 077; test -s /etc/chrona/web-password || openssl rand -hex 24 > /etc/chrona/web-password'
+sudo install -m 644 chrona.service /etc/systemd/system/chrona.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now chrona.service
+```
+
+启动前先填写本机数据集和计划：[服务文件](deploy/chrona.service) 已开启真实快照、到期清理和备份。默认监听 `127.0.0.1:8086`；如需局域网访问，在 `/etc/chrona/chrona.env` 中写入 `CHRONA_LISTEN=192.168.1.10:8086`（换成本机 IP），然后重启 `chrona`。HTTPS 可通过反向代理提供。
+
+登录账号为 **chrona**，用 `sudo cat /etc/chrona/web-password` 查看自动生成的密码。配置在 `/etc/chrona/config.yaml`，运行状态在 `/var/lib/chrona/state.json`，SSH 复用连接在 `/run/chrona/ssh`。root 服务读取 `/root/.ssh/config`，请事先配置接收端的密钥登录和主机密钥。查看日志：`sudo journalctl -u chrona -n 50 --no-pager`。
+
+## 升级与回退
+
+按上面的方法下载并校验新版本。在新压缩包的解压目录中，等正在运行的备份结束后执行：
+
+```sh
+chrona_previous=$(readlink -f /opt/chrona/current)
+chrona_backup="/var/backups/chrona/$(date +%Y%m%d-%H%M%S)"
+sudo systemctl stop chrona
+sudo install -d -m 700 "$chrona_backup"
+sudo cp -a /etc/chrona "$chrona_backup/config"
+sudo cp -a /var/lib/chrona "$chrona_backup/state"
+sudo install -d -m 755 "/opt/chrona/releases/$chrona_version"
+sudo install -m 755 chrona "/opt/chrona/releases/$chrona_version/chrona"
+sudo ln -sfn "/opt/chrona/releases/$chrona_version" /opt/chrona/current
+sudo systemctl start chrona
+sudo systemctl status chrona --no-pager
+```
+
+升级只替换程序，保留配置、密码和服务设置。保留旧版本目录，如需回退程序：
+
+```sh
+sudo ln -sfn "$chrona_previous" /opt/chrona/current
+sudo systemctl restart chrona
+```
+
+## 从源码构建
 
 需要 Go 1.24 或更新版本：
 
 ```sh
 git clone https://github.com/TheRainstorm/chrona.git
 cd chrona
-go run ./cmd/chrona -listen 127.0.0.1:8086
+make build
+./bin/chrona -listen 127.0.0.1:8086
 ```
 
-打开 [localhost:8086](http://127.0.0.1:8086)。Demo 使用模拟数据，不操作真实 ZFS。首次运行会在 `data/` 下生成配置和演示状态。
-
-使用 `make build` 构建独立程序，或运行：
-
-```sh
-CGO_ENABLED=0 go build -trimpath -o bin/chrona ./cmd/chrona
-```
-
-## 接入真实 ZFS
-
-使用安装了 OpenZFS 工具（`zfs`、`zpool`）的 Linux 主机，并让运行账号拥有目标数据集的管理权限。先参考 [config.example.yaml](config.example.yaml)，填写自己的数据集和策略：
-
-```sh
-sudo install -d -m 700 /etc/chrona /var/lib/chrona
-sudo install -m 600 config.example.yaml /etc/chrona/config.yaml
-sudoedit /etc/chrona/config.yaml
-sudo ./bin/chrona -mode zfs -listen 127.0.0.1:8086 \
-  -config /etc/chrona/config.yaml -state /var/lib/chrona/state.json
-```
-
-ZFS 模式**默认只读**。加入 `-enable-zfs-writes` 后才启用自动快照、到期清理和复制。真实模式应使用独立的状态文件，不要复用 Demo 状态。
-
-常用选项：
-
-| 选项 | 用途 |
-| --- | --- |
-| `-auth-file /etc/chrona/web-password` | 启用 HTTP Basic 认证；账号为 `chrona`，从文件读取至少 20 个字符的密码。 |
-| `-ssh-control-dir /run/chrona/ssh` | 复用 SSH 连接，执行远端查询和传输。 |
-| `-listen 127.0.0.1:8086` | 设置监听地址；远程访问可通过反向代理提供 HTTPS。 |
-
-需要开机启动时，按实际程序位置、路径和监听地址调整 [chrona.service.example](chrona.service.example)。每份配置只运行一个服务实例。
+源码构建同样默认运行 Demo。直接使用 `-mode zfs` 启动时默认只读，加入 `-enable-zfs-writes` 才允许写入；Demo 与 ZFS 模式使用不同状态文件。
 
 ## 不写 cron，只设保留数量
 
@@ -107,9 +146,15 @@ backups: []
 
 增量传输要求接收端最新快照的 GUID 在源端存在。两端基点至少保留到下次备份加缓冲时间，验证成功后才推进基点；中断传输支持续传。不会为了传输而强制回滚已有目的地，新接收的数据集保持未挂载和只读。
 
+## CI 与自动发布
+
+GitHub Actions 会检查 PR 和 `main` 推送，并交叉编译 Linux `amd64`、`arm64` 静态程序。推送 `v*` 版本标签后，通过检查的两个架构压缩包及 `SHA256SUMS` 会自动发布到 GitHub Releases。包内 `BUILDINFO.txt` 记录版本、commit 和 Go 工具链，运行 `chrona -version` 可查看版本信息。CI 负责发布文件，服务器升级仍由部署操作控制。
+
+在源码仓库中运行 `./scripts/release.sh v0.11.0` 生成同样的发布包，输出在 `dist/`。构建使用 `CGO_ENABLED=0`，不依赖外部 C 运行库。
+
 ## 开发
 
-运行 `make test` 执行 Go 测试，`node --check web/app.js` 检查 JavaScript 语法。[scripts/browser-smoke.cjs](scripts/browser-smoke.cjs) 使用 Playwright 验证独立 Demo，会修改演示配置，不能指向生产服务。修改 Go 或内置 Web 文件后需要重新构建；修改 YAML 不需要。
+运行 `make test` 执行 Go 测试，`node --check web/app.js` 检查 JavaScript 语法。[scripts/browser-smoke.cjs](https://github.com/TheRainstorm/chrona/blob/main/scripts/browser-smoke.cjs) 使用 Playwright 验证独立 Demo，会修改演示配置，不能指向生产服务。修改 Go 或内置 Web 文件后需要重新构建；修改 YAML 不需要。
 
 ## 许可证
 

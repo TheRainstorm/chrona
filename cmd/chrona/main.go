@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -13,11 +14,13 @@ import (
 	"syscall"
 	"time"
 
+	"homelab/chrona/internal/buildinfo"
 	"homelab/chrona/internal/chrona"
 	"homelab/chrona/web"
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "Print version and commit, then exit")
 	listen := flag.String("listen", "127.0.0.1:8086", "Web listen address")
 	config := flag.String("config", "data/config.yaml", "YAML configuration path")
 	state := flag.String("state", "", "Demo runtime state path (default: beside config)")
@@ -26,6 +29,10 @@ func main() {
 	sshControlDir := flag.String("ssh-control-dir", "", "Private directory for reusable SSH connections")
 	writes := flag.Bool("enable-zfs-writes", false, "Explicitly allow creating and pruning Chrona snapshots in zfs mode")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(buildinfo.String())
+		return
+	}
 	if *state == "" {
 		name := "demo-state.json"
 		if *mode == "zfs" {
@@ -63,7 +70,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(shutdown)
 	}()
-	log.Printf("Chrona 0.10.1 · %s mode · http://%s · config %s", *mode, listener.Addr(), *config)
+	log.Printf("%s · %s mode · http://%s · config %s", buildinfo.String(), *mode, listener.Addr(), *config)
 	if err = server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

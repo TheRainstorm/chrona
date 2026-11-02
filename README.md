@@ -6,6 +6,11 @@ A small, self-hosted Web UI for ZFS snapshots and backups. Run it on your NAS, s
 
 Chrona is one Go binary with an embedded HTML/CSS/JavaScript interface. It needs no database, Node.js runtime, container, or external CDN. YAML parsing is its only third-party Go dependency. The current Web interface is in Simplified Chinese.
 
+## How it works
+
+- **Snapshots turn counts into expiry times.** Each tier converts its interval × retention count into one `chrona:expires` timestamp (months follow the calendar). If several tiers coincide, one snapshot serves them all and takes the longest tier’s expiry. Cleanup checks that timestamp, with `keep` and protected backup bases preserved.
+- **Backups keep a shared stepping stone.** ZFS `send -i` sends changed blocks from a snapshot GUID shared by both ends. Each new backup snapshot expires at the next backup time + a buffer on both sides. Holds protect the previous base through delays or failures; only a verified success replaces it. Frequent local snapshots therefore do not break the incremental chain.
+
 ## What you can do
 
 - **Snapshots:** see full dataset paths, policy names, retention counts, last snapshot and next run in one row. Browse snapshots, preview the schedule, edit rules, pause, or take a snapshot directly.
@@ -24,47 +29,81 @@ Each backup destination has its own target, timing policy and enable switch:
 
 ![Chrona backup dashboard](docs/images/backups.png)
 
-## Try the demo
+## Install a prebuilt Linux release
+
+Download from [Releases](https://github.com/TheRainstorm/chrona/releases). Choose `amd64` for x86_64 or `arm64` for aarch64. Each archive includes the standalone binary, systemd unit, example configuration, documentation and license. The target needs Linux, OpenZFS tools (`zfs`, `zpool`), systemd and an SSH client for remote backups; Go is not required.
+
+```sh
+chrona_version=0.11.0
+chrona_arch=amd64                 # or arm64
+chrona_archive="chrona_${chrona_version}_linux_${chrona_arch}.tar.gz"
+chrona_url="https://github.com/TheRainstorm/chrona/releases/download/v${chrona_version}"
+curl -fLO "$chrona_url/$chrona_archive" &&
+curl -fLO "$chrona_url/SHA256SUMS" &&
+sha256sum --ignore-missing -c SHA256SUMS &&
+tar -xzf "$chrona_archive" &&
+cd "chrona_${chrona_version}_linux_${chrona_arch}" &&
+./chrona -version
+```
+
+For a private fork, use authenticated `gh release download` instead of unauthenticated `curl`. To try the downloaded binary with simulated data, run `./chrona -listen 127.0.0.1:8086` and open [localhost:8086](http://127.0.0.1:8086); Demo mode does not touch ZFS.
+
+For the first systemd installation:
+
+```sh
+sudo install -d -m 755 "/opt/chrona/releases/$chrona_version"
+sudo install -m 755 chrona "/opt/chrona/releases/$chrona_version/chrona"
+sudo ln -sfn "/opt/chrona/releases/$chrona_version" /opt/chrona/current
+sudo install -d -m 700 /etc/chrona /var/lib/chrona
+sudo test -f /etc/chrona/config.yaml || sudo install -m 600 config.example.yaml /etc/chrona/config.yaml
+sudoedit /etc/chrona/config.yaml
+sudo sh -c 'umask 077; test -s /etc/chrona/web-password || openssl rand -hex 24 > /etc/chrona/web-password'
+sudo install -m 644 chrona.service /etc/systemd/system/chrona.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now chrona.service
+```
+
+Set your actual datasets and schedules before starting: the supplied [systemd unit](deploy/chrona.service) enables real snapshots, expiry cleanup and replication. Its default address is `127.0.0.1:8086`. To listen on a LAN address, put `CHRONA_LISTEN=192.168.1.10:8086` in `/etc/chrona/chrona.env` (substitute the server’s IP), then restart `chrona`. HTTPS can be provided by a reverse proxy.
+
+Log in as **chrona**; read the generated password with `sudo cat /etc/chrona/web-password`. YAML lives in `/etc/chrona/config.yaml`, runtime state in `/var/lib/chrona/state.json`, and reusable SSH sockets in `/run/chrona/ssh`. The root service reads `/root/.ssh/config`; establish key-based access and verified host keys for each receiver. Check service logs with `sudo journalctl -u chrona -n 50 --no-pager`.
+
+## Upgrade and rollback
+
+Download and verify the new archive as above. From its extracted directory, after running backups finish:
+
+```sh
+chrona_previous=$(readlink -f /opt/chrona/current)
+chrona_backup="/var/backups/chrona/$(date +%Y%m%d-%H%M%S)"
+sudo systemctl stop chrona
+sudo install -d -m 700 "$chrona_backup"
+sudo cp -a /etc/chrona "$chrona_backup/config"
+sudo cp -a /var/lib/chrona "$chrona_backup/state"
+sudo install -d -m 755 "/opt/chrona/releases/$chrona_version"
+sudo install -m 755 chrona "/opt/chrona/releases/$chrona_version/chrona"
+sudo ln -sfn "/opt/chrona/releases/$chrona_version" /opt/chrona/current
+sudo systemctl start chrona
+sudo systemctl status chrona --no-pager
+```
+
+This replaces the binary while preserving configuration, credentials and service customizations. Keep the previous release. To roll the binary back:
+
+```sh
+sudo ln -sfn "$chrona_previous" /opt/chrona/current
+sudo systemctl restart chrona
+```
+
+## Build from source
 
 Requires Go 1.24 or newer:
 
 ```sh
 git clone https://github.com/TheRainstorm/chrona.git
 cd chrona
-go run ./cmd/chrona -listen 127.0.0.1:8086
+make build
+./bin/chrona -listen 127.0.0.1:8086
 ```
 
-Open [localhost:8086](http://127.0.0.1:8086). Demo mode uses simulated data and does not touch ZFS. The first run creates configuration and demo state under `data/`.
-
-Build a standalone binary with `make build`, or:
-
-```sh
-CGO_ENABLED=0 go build -trimpath -o bin/chrona ./cmd/chrona
-```
-
-## Connect real ZFS
-
-Use Linux with OpenZFS tools (`zfs`, `zpool`) and permissions to manage the intended datasets. Start with your own configuration, using [config.example.yaml](config.example.yaml) as a reference:
-
-```sh
-sudo install -d -m 700 /etc/chrona /var/lib/chrona
-sudo install -m 600 config.example.yaml /etc/chrona/config.yaml
-sudoedit /etc/chrona/config.yaml
-sudo ./bin/chrona -mode zfs -listen 127.0.0.1:8086 \
-  -config /etc/chrona/config.yaml -state /var/lib/chrona/state.json
-```
-
-ZFS mode is **read-only by default**. Add `-enable-zfs-writes` to enable scheduled snapshots, expiry cleanup and replication. Use a separate state file from Demo mode.
-
-Useful options:
-
-| Option | Purpose |
-| --- | --- |
-| `-auth-file /etc/chrona/web-password` | Enable HTTP Basic authentication; username `chrona`, password read from a file containing at least 20 characters. |
-| `-ssh-control-dir /run/chrona/ssh` | Reuse SSH connections for remote metadata commands and transfers. |
-| `-listen 127.0.0.1:8086` | Choose the listening address; use HTTPS through a reverse proxy for remote access. |
-
-For boot startup, adapt [chrona.service.example](chrona.service.example) to your binary, paths and listening address. Run one service instance per configuration file.
+Source builds use the same Demo mode by default. Direct `-mode zfs` execution remains read-only unless `-enable-zfs-writes` is supplied. Use separate state files for Demo and ZFS modes.
 
 ## Retention, without cron
 
@@ -107,9 +146,15 @@ The core commands are `zfs send -w -p -i BASE NEW | zfs receive -u -s DEST`, wit
 
 Incremental transfers require the receiver’s latest snapshot GUID to exist at the source. Chrona protects both ends through the next backup plus a buffer, advances the base only after successful verification, and supports interrupted receive resumption. Existing destinations are never forcibly rolled back to make a transfer fit. New receiving datasets are left unmounted and read-only.
 
+## CI and releases
+
+GitHub Actions tests pull requests and `main` pushes, then cross-compiles static Linux `amd64` and `arm64` binaries. Pushing a `v*` version tag runs the checks and publishes both archives with `SHA256SUMS` to GitHub Releases. Each package records its version, commit and Go toolchain in `BUILDINFO.txt`; `chrona -version` reports the running build. CI publishes release files; updating a server remains an explicit deployment step.
+
+From a source checkout, to produce the same packages locally, run `./scripts/release.sh v0.11.0`; output is written to `dist/`. The release build uses `CGO_ENABLED=0`, so it needs no external C runtime.
+
 ## Development
 
-Run `make test` for Go tests and `node --check web/app.js` for JavaScript syntax. [scripts/browser-smoke.cjs](scripts/browser-smoke.cjs) exercises an isolated Demo using Playwright; it changes demo configuration and must not target production. Rebuild after changing Go or embedded Web assets; YAML edits need no rebuild.
+Run `make test` for Go tests and `node --check web/app.js` for JavaScript syntax. [scripts/browser-smoke.cjs](https://github.com/TheRainstorm/chrona/blob/main/scripts/browser-smoke.cjs) exercises an isolated Demo using Playwright; it changes demo configuration and must not target production. Rebuild after changing Go or embedded Web assets; YAML edits need no rebuild.
 
 ## License
 

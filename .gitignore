@@ -1,6 +1,7 @@
 /bin/
 /data/
 /artifacts/
+/dist/
 /node_modules/
 
 # Local caches and temporary files

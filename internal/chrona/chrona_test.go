@@ -3,6 +3,7 @@ package chrona
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -182,7 +183,7 @@ func TestPolicyMutationPersistsAcrossRestart(t *testing.T) {
 	}
 }
 
-func TestPruningOnlyRemovesExpiredUnheldOwnedSnapshots(t *testing.T) {
+func TestPruningRemovesExpiredUnheldSnapshotsInExactDataset(t *testing.T) {
 	a := testApp(t)
 	p := a.config.EffectivePolicies()[0]
 	now := time.Now()
@@ -236,7 +237,7 @@ func TestReadOnlyModeRejectsSnapshotWrites(t *testing.T) {
 func TestSingleExpiryPropertyAndNoRecursiveDestroy(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$CHRONA_TEST_CALLS\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$CHRONA_TEST_CALLS\"\nif [ \"$1\" = list ]; then printf '%s\\n' \"$CHRONA_TEST_METADATA\"; fi\n"
 	if err := os.WriteFile(filepath.Join(dir, "zfs"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -247,12 +248,14 @@ func TestSingleExpiryPropertyAndNoRecursiveDestroy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = destroyRealSnapshot(context.Background(), Snapshot{Name: name, Dataset: "tank/home", Managed: true}); err != nil {
-		t.Fatal(err)
+	expired := time.Now().Add(-time.Hour)
+	t.Setenv("CHRONA_TEST_METADATA", fmt.Sprintf("%s\t123\t%d\t0\t%d\t0", name, expired.Add(-time.Hour).Unix(), expired.Unix()))
+	if deleted, err := destroyRealSnapshot(context.Background(), Snapshot{Name: name, Dataset: "tank/home", GUID: "123", Managed: true, ExpiresAt: expired}); err != nil || !deleted {
+		t.Fatal("single-snapshot deletion failed", deleted, err)
 	}
 	data, _ := os.ReadFile(logPath)
 	s := string(data)
-	if strings.Count(s, "-o\n") != 1 || !strings.Contains(s, "chrona:expires=") {
+	if strings.Count(s, "snapshot\n-o\nchrona:expires=") != 1 || !strings.Contains(s, "chrona:expires=") {
 		t.Fatalf("wrong property contract: %s", s)
 	}
 	if strings.Contains(s, "-r\n") || strings.Contains(s, "-R\n") || strings.Contains(s, "tier=") {

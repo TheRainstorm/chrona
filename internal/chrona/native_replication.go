@@ -141,13 +141,18 @@ func (a *App) runNativeBackup(ctx context.Context, c Config, b Backup) error {
 	a.state.Backups[b.ID] = state
 	a.record("success", "backup", backupSources(b), fmt.Sprintf("ZFS 复制完成 · %d 个叶子数据集 · %d 字节", len(results), total))
 	a.persistLocked()
-	a.mu.Unlock()
-	// Release only this job's superseded holds after durable success, then prune owned expired snapshots.
+	protected := a.protectedSnapshotNamesLocked()
+	deferred := map[string]bool{}
 	for _, r := range results {
-		if err := cleanupNativeSnapshots(ctx, nativeEndpoint{}, r.binding.Source, r.source.Name, nativeTag(b.ID)); err != nil {
+		deferred[r.binding.Source] = a.hasUninitializedBackupLocked(r.binding.Source)
+	}
+	a.mu.Unlock()
+	// Release only this job's superseded holds after durable success, then prune expired snapshots.
+	for _, r := range results {
+		if err := cleanupNativeSnapshots(ctx, nativeEndpoint{}, r.binding.Source, r.source.Name, nativeTag(b.ID), protected, deferred[r.binding.Source]); err != nil {
 			a.nativeWarning(b.ID, err)
 		}
-		if err := cleanupNativeSnapshots(ctx, endpoint, r.binding.Destination, r.replica.Name, nativeTag(b.ID)); err != nil {
+		if err := cleanupNativeSnapshots(ctx, endpoint, r.binding.Destination, r.replica.Name, nativeTag(b.ID), protected, false); err != nil {
 			a.nativeWarning(b.ID, err)
 		}
 	}
@@ -348,7 +353,7 @@ func (a *App) nativeCopyLeaf(ctx context.Context, c Config, b Backup, receiver n
 	return result, nil
 }
 
-func cleanupNativeSnapshots(ctx context.Context, endpoint nativeEndpoint, dataset, current, tag string) error {
+func cleanupNativeSnapshots(ctx context.Context, endpoint nativeEndpoint, dataset, current, tag string, protected map[string]bool, deferCleanup bool) error {
 	snapshots, err := endpoint.snapshots(ctx, dataset)
 	if err != nil {
 		return err
@@ -373,9 +378,16 @@ func cleanupNativeSnapshots(ctx context.Context, endpoint nativeEndpoint, datase
 	if err != nil {
 		return err
 	}
+	if deferCleanup {
+		return nil
+	}
+	latest := ""
+	if len(snapshots) > 0 {
+		latest = snapshots[len(snapshots)-1].Name
+	}
 	for _, s := range snapshots {
-		if s.Name != current && s.Managed && !s.ExpiresAt.After(time.Now()) && len(s.HeldBy) == 0 {
-			if _, err = endpoint.run(ctx, "destroy", s.Name); err != nil {
+		if s.Name != current && s.Name != latest && !protected[s.Name] && snapshotExpired(s, time.Now()) {
+			if _, err = endpoint.destroyExpiredSnapshot(ctx, s, time.Now()); err != nil {
 				return err
 			}
 		}

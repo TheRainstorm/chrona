@@ -24,8 +24,10 @@ func validateEffectiveBackupTargets(c Config, inventory []Dataset) error {
 
 func (a *App) pruneReplicasLocked(now time.Time) {
 	kept := []ReplicaSnapshot{}
+	protected := a.protectedSnapshotNamesLocked()
 	for _, r := range a.state.Replicas {
-		if r.Managed && !r.ExpiresAt.After(now) && len(r.HeldBy) == 0 {
+		r.Snapshot = withSnapshotRetention(r.Snapshot)
+		if !protected[r.Name] && snapshotExpired(r.Snapshot, now) {
 			continue
 		}
 		kept = append(kept, r)

@@ -28,15 +28,17 @@ type Dataset struct {
 }
 
 type Snapshot struct {
-	GUID      string    `json:"guid,omitempty"`
-	Name      string    `json:"name"`
-	Dataset   string    `json:"dataset"`
-	CreatedAt time.Time `json:"created_at"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Tier      string    `json:"tier"`
-	Used      uint64    `json:"used"`
-	HeldBy    []string  `json:"held_by"`
-	Managed   bool      `json:"managed"`
+	GUID            string    `json:"guid,omitempty"`
+	Name            string    `json:"name"`
+	Dataset         string    `json:"dataset"`
+	CreatedAt       time.Time `json:"created_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	Tier            string    `json:"tier"`
+	Used            uint64    `json:"used"`
+	HeldBy          []string  `json:"held_by"`
+	Managed         bool      `json:"managed"`
+	Permanent       bool      `json:"permanent"`
+	RetentionSource string    `json:"retention_source"`
 }
 
 type Log struct {

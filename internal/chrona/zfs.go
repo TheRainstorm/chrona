@@ -60,23 +60,9 @@ func realInventory(ctx context.Context) ([]Pool, []Dataset, []Snapshot, error) {
 		if len(f) != 6 {
 			continue
 		}
-		parts := strings.SplitN(f[0], "@", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		creation, e := strconv.ParseInt(f[1], 10, 64)
+		s, e := snapshotMetadata(f[0], f[5], f[1], f[2], f[3], f[4])
 		if e != nil {
 			continue
-		}
-		used, _ := strconv.ParseUint(f[2], 10, 64)
-		expires, propErr := strconv.ParseInt(f[3], 10, 64)
-		managed := strings.HasPrefix(parts[1], SnapshotPrefix) && propErr == nil && expires > 0
-		s := Snapshot{Name: f[0], GUID: f[5], Dataset: parts[0], CreatedAt: time.Unix(creation, 0), Used: used, HeldBy: []string{}, Managed: managed}
-		if managed {
-			s.ExpiresAt = time.Unix(expires, 0)
-		}
-		if f[4] != "0" && f[4] != "-" {
-			s.HeldBy = []string{"ZFS hold"}
 		}
 		snapshots = append(snapshots, s)
 	}
@@ -94,12 +80,6 @@ func createRealSnapshot(ctx context.Context, dataset string, event Event) (strin
 	return name, err
 }
 
-func destroyRealSnapshot(ctx context.Context, s Snapshot) error {
-	parts := strings.SplitN(s.Name, "@", 2)
-	if len(parts) != 2 || !datasetPattern.MatchString(parts[0]) || !strings.HasPrefix(parts[1], SnapshotPrefix) || !s.Managed || len(s.HeldBy) > 0 {
-		return errors.New("快照不满足清理条件")
-	}
-	// No -r/-R: child policies and manual snapshots are outside this operation.
-	_, err := zfsCommand(ctx, "zfs", "destroy", s.Name)
-	return err
+func destroyRealSnapshot(ctx context.Context, s Snapshot) (bool, error) {
+	return (nativeEndpoint{}).destroyExpiredSnapshot(ctx, s, time.Now())
 }

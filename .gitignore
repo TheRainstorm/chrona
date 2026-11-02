@@ -16,3 +16,9 @@ __pycache__/
 web-password
 *.key
 *.pem
+
+# Runtime files when starting with paths in the repository root
+/config.yaml
+/config.yaml.*
+/state.json
+/demo-state.json

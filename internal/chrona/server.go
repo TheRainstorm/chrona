@@ -280,11 +280,17 @@ func (a *App) snapshotLocked(ctx context.Context, p Policy, event Event) error {
 	// Only clean this exact dataset after the new snapshot has succeeded.
 	kept := make([]Snapshot, 0, len(a.state.Snapshots))
 	pruned := 0
+	protected := a.protectedSnapshotNamesLocked()
+	deferCleanup := a.hasUninitializedBackupLocked(p.Dataset)
 	for _, s := range a.state.Snapshots {
-		if s.Dataset == p.Dataset && s.Managed && !s.ExpiresAt.After(time.Now()) && len(s.HeldBy) == 0 {
+		s = withSnapshotRetention(s)
+		if !deferCleanup && s.Dataset == p.Dataset && !protected[s.Name] && snapshotExpired(s, time.Now()) {
 			if a.opts.Mode == "zfs" {
-				if err := destroyRealSnapshot(ctx, s); err != nil {
+				deleted, err := destroyRealSnapshot(ctx, s)
+				if err != nil {
 					a.record("error", "prune", s.Dataset, err.Error())
+				}
+				if !deleted {
 					kept = append(kept, s)
 					continue
 				}
@@ -413,7 +419,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/backups/{id}", a.handleDeleteBackup)
 	mux.HandleFunc("POST /api/backups/{id}/run", a.handleRunBackup)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "mode": a.opts.Mode, "version": "0.8.0"})
+		writeJSON(w, 200, map[string]string{"status": "ok", "mode": a.opts.Mode, "version": "0.9.0"})
 	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return authorize(a.opts.AuthSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -476,14 +482,21 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		backups = append(backups, map[string]any{"task": b, "state": a.state.Backups[b.ID], "next": next})
 	}
+	replicas := make([]ReplicaSnapshot, 0, len(a.state.Replicas))
+	for _, replica := range a.state.Replicas {
+		replicas = append(replicas, *replicaWithRetention(&replica))
+	}
 	var bytes uint64
-	recent := 0
+	recent, permanent := 0, 0
 	counts, latest := map[string]int{}, map[string]Snapshot{}
 	for _, s := range a.state.Snapshots {
 		bytes += s.Used
+		if keepSnapshot(s.Name) {
+			permanent++
+		}
 		counts[s.Dataset]++
 		if s.CreatedAt.After(latest[s.Dataset].CreatedAt) {
-			latest[s.Dataset] = s
+			latest[s.Dataset] = withSnapshotRetention(s)
 		}
 		if s.CreatedAt.After(now.Add(-24 * time.Hour)) {
 			recent++
@@ -524,7 +537,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 				next = NextBackup(b, loc, now)
 			}
 			state := a.state.Backups[b.ID]
-			rowBackups = append(rowBackups, map[string]any{"task": b, "destination": binding.Destination, "origin": resolved.Origin, "inherited": resolved.Origin != d.Name, "state": state, "next": next, "disabled": binding.Disabled, "replica": findReplica(a.state.Replicas, b, binding, state.Bases[d.Name])})
+			rowBackups = append(rowBackups, map[string]any{"task": b, "destination": binding.Destination, "origin": resolved.Origin, "inherited": resolved.Origin != d.Name, "state": state, "next": next, "disabled": binding.Disabled, "replica": replicaWithRetention(findReplica(a.state.Replicas, b, binding, state.Bases[d.Name]))})
 		}
 		_, source, _ := a.config.resolveSnapshot(d.Name, byName)
 		explicit := false
@@ -533,7 +546,7 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, map[string]any{"config": d, "managed": a.config.IsManagedDataset(d.Name), "is_leaf": leaf, "snapshot_count": counts[d.Name], "latest_snapshot": latest[d.Name], "snapshot": snapshot, "snapshot_source": source, "inherited": source != "" && source != d.Name, "explicit": explicit, "managed_ancestor": a.config.ManagedAncestor(d.Name), "next": event, "backups": rowBackups})
 	}
-	writeJSON(w, 200, map[string]any{"config": a.config, "dataset_rows": rows, "mode": a.opts.Mode, "writes_enabled": a.opts.Mode == "demo" || a.opts.AllowWrites, "hostname": a.hostname, "timezone": a.config.Timezone, "jitter_seconds": a.config.JitterSeconds, "now": now, "pools": a.pools, "datasets": a.datasets, "policies": policies, "backups": backups, "logs": logs, "stats": map[string]any{"active": active, "snapshots": len(a.state.Snapshots), "recent": recent, "snapshot_bytes": bytes, "heap_bytes": mem.Alloc, "uptime_seconds": int(time.Since(a.started).Seconds())}, "config_path": filepath.Base(a.opts.ConfigPath), "replicas": a.state.Replicas})
+	writeJSON(w, 200, map[string]any{"config": a.config, "dataset_rows": rows, "mode": a.opts.Mode, "writes_enabled": a.opts.Mode == "demo" || a.opts.AllowWrites, "hostname": a.hostname, "timezone": a.config.Timezone, "jitter_seconds": a.config.JitterSeconds, "now": now, "pools": a.pools, "datasets": a.datasets, "policies": policies, "backups": backups, "logs": logs, "stats": map[string]any{"active": active, "snapshots": len(a.state.Snapshots), "recent": recent, "permanent": permanent, "snapshot_bytes": bytes, "heap_bytes": mem.Alloc, "uptime_seconds": int(time.Since(a.started).Seconds())}, "config_path": filepath.Base(a.opts.ConfigPath), "replicas": replicas})
 }
 
 func (a *App) handleSnapshots(w http.ResponseWriter, r *http.Request) {
@@ -553,7 +566,7 @@ func (a *App) handleSnapshots(w http.ResponseWriter, r *http.Request) {
 		if tier != "" && s.Tier != tier {
 			continue
 		}
-		items = append(items, s)
+		items = append(items, withSnapshotRetention(s))
 	}
 	sortSnapshots(items)
 	total := len(items)

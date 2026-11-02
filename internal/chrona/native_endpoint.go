@@ -88,16 +88,9 @@ func (e nativeEndpoint) snapshots(ctx context.Context, dataset string) ([]Snapsh
 		if len(f) != 6 || !strings.HasPrefix(f[0], dataset+"@") {
 			continue
 		}
-		created, _ := strconv.ParseInt(f[2], 10, 64)
-		used, _ := strconv.ParseUint(f[3], 10, 64)
-		expiry, expiryErr := strconv.ParseInt(f[4], 10, 64)
-		suffix := strings.TrimPrefix(f[0], dataset+"@")
-		s := Snapshot{Name: f[0], Dataset: dataset, GUID: f[1], CreatedAt: time.Unix(created, 0), Used: used, Managed: strings.HasPrefix(suffix, SnapshotPrefix) && expiryErr == nil && expiry > 0, HeldBy: []string{}}
-		if expiry > 0 {
-			s.ExpiresAt = time.Unix(expiry, 0)
-		}
-		if f[5] != "0" && f[5] != "-" {
-			s.HeldBy = []string{"ZFS hold"}
+		s, err := snapshotMetadata(f[0], f[1], f[2], f[3], f[4], f[5])
+		if err != nil {
+			return nil, err
 		}
 		snapshots = append(snapshots, s)
 	}
@@ -130,12 +123,24 @@ func (e nativeEndpoint) hold(ctx context.Context, name, tag string) error {
 	return err
 }
 func (e nativeEndpoint) expiry(ctx context.Context, name string, until time.Time) error {
-	old, err := e.run(ctx, "get", "-Hp", "-o", "value", ExpiryProperty, name)
+	if keepSnapshot(name) {
+		return nil
+	}
+	out, err := e.run(ctx, "list", "-Hp", "-t", "snapshot", "-o", "name,guid,creation,used,"+ExpiryProperty+",userrefs", name)
 	if err != nil {
 		return err
 	}
-	unix, _ := strconv.ParseInt(strings.TrimSpace(old), 10, 64)
-	if unix >= until.Unix() {
+	fields := strings.Fields(out)
+	if len(fields) != 6 || fields[0] != name {
+		return fmt.Errorf("无法读取快照期限：%s", name)
+	}
+	old, err := snapshotMetadata(fields[0], fields[1], fields[2], fields[3], fields[4], fields[5])
+	if err != nil {
+		return err
+	}
+	// Promoting a legacy base to an explicit protection floor must not shorten
+	// its default thirty-day lifetime.
+	if !old.ExpiresAt.IsZero() && !old.ExpiresAt.Before(until) {
 		return nil
 	}
 	_, err = e.run(ctx, "set", ExpiryProperty+"="+strconv.FormatInt(until.Unix(), 10), name)

@@ -45,6 +45,18 @@ function formattedTime(value){
  const state=()=>api('/api/state');
  const resolved=async name=>(await state()).dataset_rows.find(row=>row.config.name===name);
  const binding=async(name,id)=>(await resolved(name)).backups.find(entry=>entry.task.id===id);
+ const overview=async kind=>{
+  const current=await state(),value=async key=>page.locator(`.overview-card[data-stat="${key}"]`).getAttribute('data-value');assert.equal(await page.locator('.overview-card').count(),4);
+  if(kind==='snapshots'){
+   assert.equal(Number(await value('snapshot-datasets')),current.dataset_rows.filter(row=>row.snapshot?.enabled).length);assert.equal(Number(await value('snapshot-count')),current.stats.snapshots);assert.equal(Number(await value('snapshot-space')),current.stats.snapshot_bytes);
+   const next=current.dataset_rows.map(row=>row.next?.run_at).filter(Boolean).sort((a,b)=>new Date(a)-new Date(b))[0]||'';assert.equal(await value('snapshot-next'),next);
+  }else{
+   const entries=current.dataset_rows.filter(row=>row.is_leaf).flatMap(row=>row.backups),enabled=entries.filter(entry=>entry.task.enabled&&!entry.disabled),jobs=[...new Map(entries.map(entry=>[entry.task.id,entry])).values()];
+   assert.equal(Number(await value('backup-targets')),entries.length);assert.equal(Number(await value('backup-enabled')),enabled.length);assert.equal(Number(await value('backup-health')),jobs.filter(entry=>entry.state.error||entry.state.warning).length);
+   const next=enabled.map(entry=>entry.next).filter(Boolean).sort((a,b)=>new Date(a)-new Date(b))[0]||'';assert.equal(await value('backup-next'),next);
+  }
+ };
+
  const edit=async name=>{await snapshot(name).locator('.row-actions [data-action=edit-dataset]').click();await page.locator('#dataset-form').waitFor();};
  const save=async form=>{await page.locator('#save-editor').click();await page.locator(form).waitFor({state:'detached'});};
  const zeroCounts=async()=>{
@@ -54,7 +66,7 @@ function formattedTime(value){
  const search=async value=>{await page.locator('#search').fill(value);};
  const check=async(name,fn)=>{await fn();checks.push(name);console.log('PASS',name);};
  try{
-  await check('snapshot rows start expanded with full paths, named rules, explicit retention and next time',async()=>{
+  await check('snapshot rows show actual last snapshot time, full paths, named rules, retention and next time',async()=>{
    await page.goto(base,{waitUntil:'networkidle'});
    assert.deepEqual(await page.locator('nav a').allTextContents(),['快照','备份','配置']);
    assert.equal(await page.locator('[data-dataset-row]:visible').count(),10);
@@ -64,8 +76,10 @@ function formattedTime(value){
    for(const label of ['15分','小时','天','周','月'])assert((await row.locator('.snapshot-keep').innerText()).includes(label));
    for(const count of Object.values(entry.snapshot.keep))assert((await row.locator('.snapshot-keep').innerText()).includes(String(count)));
    assert((await row.locator('.snapshot-next').innerText()).includes(formattedTime(entry.next.run_at)));
+   assert((await row.locator('.snapshot-last').innerText()).includes(formattedTime(entry.latest_snapshot.created_at)));
+   const empty=(await state()).dataset_rows.find(row=>row.snapshot&&!row.snapshot_count);if(empty){assert.equal(await snapshot(empty.config.name).locator('.snapshot-last time').count(),0);assert((await snapshot(empty.config.name).locator('.snapshot-last').innerText()).includes('尚无快照'));}
    assert.equal(await page.locator('[data-action=backup-details],[data-action=snapshot-settings]').count(),0);
-   await page.screenshot({path:path.join(artifacts,'list-snapshots-desktop.png'),fullPage:true});
+   await overview('snapshots');await page.screenshot({path:path.join(artifacts,'list-snapshots-desktop.png'),fullPage:true});
   });
   await check('optional snapshot folds hide children, then filters and reload show full paths expanded',async()=>{
    const fold=snapshot('Saturn').locator('[data-action=toggle-tree]');
@@ -75,7 +89,8 @@ function formattedTime(value){
    await page.getByRole('button',{name:'全部收起',exact:true}).click();assert.equal(await snapshot('Saturn/APP/Immich').isVisible(),false);
    await page.getByRole('button',{name:'全部展开',exact:true}).click();assert.equal(await page.locator('[data-dataset-row]:visible').count(),10);
    await page.getByRole('button',{name:'仅本级设置',exact:true}).click();assert.equal(await page.locator('[data-dataset-row]:visible').count(),5);assert.equal(await snapshot('Saturn/Archive').count(),0);
-   await page.getByRole('button',{name:'全部数据集',exact:true}).click();assert.equal(await page.locator('[data-dataset-row]:visible').count(),13);
+   await page.getByRole('button',{name:'全部数据集',exact:true}).click();assert.equal(await page.locator('[data-dataset-row]:visible').count(),13);assert.equal((await resolved('rpool')).snapshot_count,0);assert.equal(await snapshot('rpool').locator('.snapshot-last time').count(),0);
+   for(const row of (await state()).dataset_rows){const local=!!(row.config.policy||row.config.snapshot||row.config.snapshot_mode==='none');assert.equal(await snapshot(row.config.name).evaluate(element=>element.classList.contains('local-rule')),local);assert.equal(await snapshot(row.config.name).locator('.local-rule-badge').count(),local?1:0);}await overview('snapshots');
    await edit('rpool/ROOT');await page.locator('#snapshot-mode').selectOption('ssd');await save('#dataset-form');assert.equal((await resolved('rpool/ROOT')).config.policy,'ssd');
    await page.reload({waitUntil:'networkidle'});assert.equal(await page.locator('[data-dataset-row]:visible').count(),13);
   });
@@ -85,7 +100,16 @@ function formattedTime(value){
    await snapshot('Saturn/Archive').locator('[data-action=plan]').click();await page.locator('.plan-table').waitFor();await page.keyboard.press('Escape');
    await snapshot('Saturn/Archive').locator('[data-action=toggle-dataset]').click();await until(async()=>(await snapshot('Saturn/Archive').locator('[data-action=toggle-dataset]').getAttribute('aria-checked'))==='false');assert.equal((await resolved('Saturn/Archive')).snapshot.enabled,false);assert((await snapshot('Saturn/Archive').locator('.snapshot-next').innerText()).includes('暂停'));
    await snapshot('Saturn/Archive').locator('[data-action=toggle-dataset]').click();await until(async()=>(await snapshot('Saturn/Archive').locator('[data-action=toggle-dataset]').getAttribute('aria-checked'))==='true');
-   const before=(await resolved('Saturn/Archive')).snapshot_count;await snapshot('Saturn/Archive').locator('[data-action=run-dataset]').click();await until(async()=>(await resolved('Saturn/Archive')).snapshot_count>before);await until(async()=>await snapshot('Saturn/Archive').locator('[data-action=run-dataset]').isEnabled());
+   const before=(await resolved('Saturn/Archive')).snapshot_count;await snapshot('Saturn/Archive').locator('[data-action=run-dataset]').click();await until(async()=>(await resolved('Saturn/Archive')).snapshot_count>before);await until(async()=>await snapshot('Saturn/Archive').locator('[data-action=run-dataset]').isEnabled());const latest=(await resolved('Saturn/Archive')).latest_snapshot;assert((await snapshot('Saturn/Archive').locator('.snapshot-last').innerText()).includes(formattedTime(latest.created_at)));assert.equal(await snapshot('Saturn/Archive').evaluate(element=>element.classList.contains('local-rule')),false,'Pause-only config must not be highlighted as a local rule');
+  });
+  if(process.env.CHRONA_RETENTION_FIXTURE_DATASET)await check('legacy snapshot history shows creation plus 30 days, while mixed-case keep is permanent',async()=>{
+   const name=process.env.CHRONA_RETENTION_FIXTURE_DATASET,response=await api('/api/snapshots?'+new URLSearchParams({dataset:name,page:1}));
+   const legacy=response.items.find(item=>item.name.endsWith('@qa_legacy_30days')),permanent=response.items.find(item=>item.name.endsWith('@qa_KeEp_forever'));
+   assert(legacy&&permanent,'Seed both retention fixtures in isolated Demo state before launch');assert.equal(legacy.retention_source,'default');assert.equal(legacy.permanent,false);assert.equal(new Date(legacy.expires_at)-new Date(legacy.created_at),30*24*60*60*1000);assert.equal(permanent.retention_source,'keep');assert.equal(permanent.permanent,true);
+   await snapshot(name).locator('[data-action=browse]').click();await page.locator('.dialog table').waitFor();
+   const legacyRow=page.locator('.dialog tbody tr').filter({hasText:'qa_legacy_30days'}),keepRow=page.locator('.dialog tbody tr').filter({hasText:'qa_KeEp_forever'});
+   assert((await legacyRow.locator('td').nth(2).innerText()).includes(formattedTime(legacy.expires_at)));assert((await legacyRow.locator('td').nth(2).innerText()).replace(/\s/g,'').includes('默认保留30天'));assert((await keepRow.locator('td').nth(2).innerText()).includes('永久保留'));assert.equal(await keepRow.locator('td').nth(2).locator('time').count(),0);
+   await page.screenshot({path:path.join(artifacts,'retention-history.png')});await page.keyboard.press('Escape');
   });
   await check('new snapshot policies default to zero while existing and copied counts remain intact',async()=>{
    await page.locator('.public-section').evaluate(element=>element.open=true);const previousPublic=await page.locator('.public-section').elementHandle();await page.waitForFunction(element=>!element.isConnected,previousPublic,{timeout:12000});assert(await page.locator('.public-section').evaluate(element=>element.open));await page.locator('[data-action=new-policy]').click();await zeroCounts();await page.keyboard.press('Escape');
@@ -113,7 +137,25 @@ function formattedTime(value){
    }
    const paused=backup('Saturn/APP/Immich','archive-n5105');assert((await paused.locator('.backup-next').innerText()).includes('暂停'));assert(await paused.locator('[data-action=run-backup]').isDisabled());
    assert(!/\d{2}-\d{2}/.test(await paused.locator('.backup-last').innerText()));
-   await page.screenshot({path:path.join(artifacts,'list-backups-desktop.png'),fullPage:true});
+   await overview('backups');await page.screenshot({path:path.join(artifacts,'list-backups-desktop.png'),fullPage:true});
+  });
+  await check('per-destination backup switches persist without enabling or pausing siblings',async()=>{
+   const row=backup('Saturn/Archive','archive-n5105'),toggle=row.locator('.row-actions [data-action=toggle-backup]'),other=backup('Saturn/Archive','archive-secondary-test'),paused=backup('Saturn/APP/Immich','archive-n5105');
+   assert.equal(await toggle.getAttribute('aria-checked'),'true');await toggle.click();await until(async()=>(await toggle.getAttribute('aria-checked'))==='false');
+   assert((await row.locator('.backup-next').innerText()).includes('暂停'));assert.equal(await row.locator('.backup-next time').count(),0);assert(await row.locator('[data-action=run-backup]').isDisabled());
+   let current=await binding('Saturn/Archive','archive-n5105');assert.equal(current.disabled,true);assert.equal(current.task.enabled,true);assert.equal((await binding('Saturn/APP/Immich','archive-n5105')).disabled,true);assert.equal(await other.locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'true');
+   await page.reload({waitUntil:'networkidle'});assert.equal(await toggle.getAttribute('aria-checked'),'false');assert.equal((await binding('Saturn/Archive','archive-n5105')).disabled,true);
+   await toggle.click();await until(async()=>(await toggle.getAttribute('aria-checked'))==='true');assert(await row.locator('.backup-next time').isVisible());assert(await row.locator('[data-action=run-backup]').isEnabled());assert.equal((await binding('Saturn/APP/Immich','archive-n5105')).disabled,true);
+   await paused.locator('[data-action=toggle-backup]').click();await until(async()=>(await paused.locator('[data-action=toggle-backup]').getAttribute('aria-checked'))==='true');assert.equal(await toggle.getAttribute('aria-checked'),'true');assert.equal(await other.locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'true');
+   await paused.locator('[data-action=toggle-backup]').click();await until(async()=>(await paused.locator('[data-action=toggle-backup]').getAttribute('aria-checked'))==='false');
+  });
+  await check('enabling one destination of a globally disabled shared rule keeps its sibling off',async()=>{
+   const current=(await state()).config,template=current.backups.find(task=>task.id==='archive-n5105');current.backups.push({...structuredClone(template),id:'disabled-rule-test',name:'暂停的公共规则',enabled:false,datasets:[{source:'Saturn/Archive',destination:'rpool/backup/DisabledArchive'},{source:'Saturn/APP/Seafile',destination:'rpool/backup/DisabledSeafile'}]});await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(current)});await page.reload({waitUntil:'networkidle'});
+   const row=backup('Saturn/Archive','disabled-rule-test'),sibling=backup('Saturn/APP/Seafile','disabled-rule-test');assert.equal(await row.locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'false');assert.equal(await sibling.locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'false');
+   await row.locator('[data-action=toggle-backup]').click();await until(async()=>(await row.locator('[data-action=toggle-backup]').getAttribute('aria-checked'))==='true');
+   assert.equal((await binding('Saturn/Archive','disabled-rule-test')).task.enabled,true);assert.equal((await binding('Saturn/APP/Seafile','disabled-rule-test')).disabled,true);assert.equal(await sibling.locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'false');assert.equal(await sibling.locator('.backup-next time').count(),0);assert(await sibling.locator('[data-action=run-backup]').isDisabled());
+   await page.reload({waitUntil:'networkidle'});assert.equal(await row.locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'true');assert.equal(await sibling.locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'false');
+   const cleanup=(await state()).config;cleanup.backups=cleanup.backups.filter(task=>task.id!=='disabled-rule-test');await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(cleanup)});await page.reload({waitUntil:'networkidle'});assert.equal(await page.locator('[data-backup-dataset]').count(),5);
   });
   await check('backup search matches exact destination and rule without aggregating another destination',async()=>{
    await search('Archive-secondary');assert.equal(await page.locator('[data-backup-dataset]').count(),1);assert.equal(await backup('Saturn/Archive','archive-secondary-test').count(),1);
@@ -126,16 +168,17 @@ function formattedTime(value){
    for(const field of ['host','port','cadence','at','keep_weekly','keep_monthly'])assert.equal(await page.locator(`[name=${field}]`).inputValue(),String(before.task[field]));
    await page.locator('[name=destination]').fill('rpool/backup/Archive-third-test');await save('#dataset-backup-form');
    const created=(await resolved('Saturn/Archive')).backups.find(entry=>entry.destination==='rpool/backup/Archive-third-test');assert(created.task.private);assert.notEqual(created.task.id,before.task.id);assert.equal(await backup('Saturn/Archive').count(),3);assert.equal((await binding('Saturn/Archive','archive-secondary-test')).destination,before.destination);
+   const privateRow=backup('Saturn/Archive',created.task.id);await privateRow.locator('[data-action=toggle-backup]').click();await until(async()=>(await privateRow.locator('[data-action=toggle-backup]').getAttribute('aria-checked'))==='false');assert.equal(await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'true');await privateRow.locator('[data-action=toggle-backup]').click();await until(async()=>(await privateRow.locator('[data-action=toggle-backup]').getAttribute('aria-checked'))==='true');
    await backup('Saturn/Archive',created.task.id).locator('.row-actions [data-action=dataset-backup][data-id]').click();await page.locator('#backup-mode').selectOption('none');await save('#dataset-backup-form');assert.equal(await backup('Saturn/Archive').count(),2);assert.equal((await resolved('Saturn/Archive')).backups.length,2);
   });
   await check('inline edit and run affect only their destination, and completed rows update automatically',async()=>{
    const originalBefore=await binding('Saturn/Archive','archive-n5105');
    await backup('Saturn/Archive','archive-secondary-test').locator('.row-actions [data-action=dataset-backup][data-id]').click();await page.locator('#dataset-backup-form').waitFor();assert.equal(await page.locator('#backup-mode').inputValue(),'archive-secondary-test');assert.equal(await page.locator('#backup-mode option[value=inherit]').count(),0);
    await page.locator('[name=destination]').fill('rpool/backup/Archive-secondary-edited');await save('#dataset-backup-form');assert.equal((await binding('Saturn/Archive','archive-secondary-test')).destination,'rpool/backup/Archive-secondary-edited');assert.equal((await binding('Saturn/Archive','archive-n5105')).destination,originalBefore.destination);
-   await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=run-backup]').click();await until(async()=>!!(await binding('Saturn/Archive','archive-secondary-test')).state.completed?.['Saturn/Archive']);
+   await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=run-backup]').click();await until(async()=>await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=toggle-backup]').isDisabled());assert(await backup('Saturn/Archive','archive-n5105').locator('[data-action=toggle-backup]').isDisabled());await until(async()=>!!(await binding('Saturn/Archive','archive-secondary-test')).state.completed?.['Saturn/Archive']);
    const entry=await binding('Saturn/Archive','archive-secondary-test');assert(entry.replica);assert(new Date(entry.replica.expires_at)>new Date(entry.state.transfers['Saturn/Archive'].next_backup_at));assert.equal((await binding('Saturn/Archive','archive-n5105')).state.completed['Saturn/Archive'],originalBefore.state.completed['Saturn/Archive']);
    const request=runs.at(-1);assert.equal(request.pathname,'/api/backups/archive-secondary-test/run');assert.equal(request.searchParams.get('dataset'),'Saturn/Archive');
-   await until(async()=>(await backup('Saturn/Archive','archive-secondary-test').locator('.backup-last').innerText()).includes(formattedTime(entry.state.completed['Saturn/Archive'])));assert(await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=run-backup]').isEnabled());
+   await until(async()=>(await backup('Saturn/Archive','archive-secondary-test').locator('.backup-last').innerText()).includes(formattedTime(entry.state.completed['Saturn/Archive'])));assert(await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=run-backup]').isEnabled());assert(await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=toggle-backup]').isEnabled());assert(await backup('Saturn/Archive','archive-n5105').locator('[data-action=toggle-backup]').isEnabled());
   });
   await check('all backup datasets allow direct leaf plans and removal preserves the other destination',async()=>{
    await page.getByRole('button',{name:'全部数据集',exact:true}).click();assert.equal(await page.locator('[data-backup-dataset]').count(),14);
@@ -152,14 +195,14 @@ function formattedTime(value){
    await page.reload({waitUntil:'networkidle'});assert.equal(await backup('Saturn/APP').count(),0);assert.equal(await page.locator('[data-backup-dataset]').count(),5);
   });
   await check('mobile preserves every column with contained horizontal scrolling and saved filters',async()=>{
-   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));assert.equal(await page.locator('.overview-grid').evaluate(element=>getComputedStyle(element).gridTemplateColumns.split(' ').length),2);
    assert.equal(await page.locator('[data-backup-dataset]').count(),5);for(const cell of ['.backup-source','.backup-destination','.backup-rule','.backup-last','.backup-next'])assert(await backup('Saturn/Archive','archive-n5105').locator(cell).isVisible());
    await page.screenshot({path:path.join(artifacts,'list-backups-mobile.png'),fullPage:true});
    assert(await page.locator('.backup-table').evaluate(table=>[...table.querySelectorAll('.row-actions button')].every(button=>button.getBoundingClientRect().right<=table.getBoundingClientRect().right+1)));const scroll=page.locator('.dataset-backup-list .list-scroll');await scroll.evaluate(element=>element.scrollLeft=element.scrollWidth);const scrollLeft=await scroll.evaluate(element=>element.scrollLeft),oldTable=await page.locator('.backup-table').elementHandle();await page.waitForFunction(element=>!element.isConnected,oldTable,{timeout:12000});assert.equal(await scroll.evaluate(element=>element.scrollLeft),scrollLeft);
    await backup('Saturn/Archive','archive-n5105').locator('.row-actions [data-action=dataset-backup][data-id]').click();await page.locator('#dataset-backup-form').waitFor();assert.equal(await page.locator('[name=destination]').inputValue(),'rpool/backup/Archive');await page.keyboard.press('Escape');assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    await page.getByRole('link',{name:'快照',exact:true}).click();await page.getByRole('button',{name:'仅本级设置',exact:true}).click();await page.reload({waitUntil:'networkidle'});assert.equal(await page.locator('[data-action=dataset-scope].active').innerText(),'仅本级设置');
-   assert(await snapshot('Saturn/APP/Immich').isVisible());for(const cell of ['.dataset-path','.snapshot-policy','.snapshot-keep','.snapshot-next'])assert(await snapshot('Saturn/APP/Immich').locator(cell).isVisible());assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-   await page.screenshot({path:path.join(artifacts,'list-snapshots-mobile.png'),fullPage:true});assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+   assert.equal(await page.locator('.overview-grid').evaluate(element=>getComputedStyle(element).gridTemplateColumns.split(' ').length),2);assert(await snapshot('Saturn/APP/Immich').isVisible());for(const cell of ['.dataset-path','.snapshot-policy','.snapshot-keep','.snapshot-last','.snapshot-next'])assert(await snapshot('Saturn/APP/Immich').locator(cell).isVisible());assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+   assert(await page.locator('.snapshot-table').evaluate(table=>[...table.querySelectorAll('.row-actions button')].every(button=>button.getBoundingClientRect().right<=table.getBoundingClientRect().right+1)));await page.screenshot({path:path.join(artifacts,'list-snapshots-mobile.png'),fullPage:true});assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
   });
   fs.writeFileSync(path.join(artifacts,'browser-report.json'),JSON.stringify({checked_at:new Date().toISOString(),checks,errors,external,base},null,2)+'\n');console.log(`${checks.length} current-UI checks passed`);
  }catch(error){await page.screenshot({path:path.join(artifacts,'failure.png'),fullPage:true}).catch(()=>{});throw error;}

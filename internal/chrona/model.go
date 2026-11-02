@@ -42,22 +42,23 @@ type BackupDataset struct {
 }
 
 type Backup struct {
-	ID           string          `json:"id" yaml:"id"`
-	Name         string          `json:"name" yaml:"name"`
-	Source       string          `json:"source,omitempty" yaml:"source,omitempty"` // v1 input only
-	Datasets     []BackupDataset `json:"datasets" yaml:"datasets"`
-	Host         string          `json:"host" yaml:"host"`
-	Port         int             `json:"port" yaml:"port"`
-	Destination  string          `json:"destination,omitempty" yaml:"destination,omitempty"` // v1 input only
-	Cadence      string          `json:"cadence" yaml:"cadence"`
-	Weekdays     []int           `json:"weekdays" yaml:"weekdays"`
-	MonthDay     int             `json:"month_day" yaml:"month_day"`
-	At           string          `json:"at" yaml:"at"`
-	Enabled      bool            `json:"enabled" yaml:"enabled"`
-	KeepWeekly   int             `json:"keep_weekly" yaml:"keep_weekly"`
-	KeepMonthly  int             `json:"keep_monthly" yaml:"keep_monthly"`
-	Private      bool            `json:"private,omitempty" yaml:"private,omitempty"`
-	GraceMinutes int             `json:"grace_minutes,omitempty" yaml:"grace_minutes,omitempty"`
+	ID          string          `json:"id" yaml:"id"`
+	Name        string          `json:"name" yaml:"name"`
+	Source      string          `json:"source,omitempty" yaml:"source,omitempty"` // v1 input only
+	Datasets    []BackupDataset `json:"datasets" yaml:"datasets"`
+	Host        string          `json:"host" yaml:"host"`
+	Port        int             `json:"port" yaml:"port"`
+	Destination string          `json:"destination,omitempty" yaml:"destination,omitempty"` // v1 input only
+	Cadence     string          `json:"cadence" yaml:"cadence"`
+	Weekdays    []int           `json:"weekdays" yaml:"weekdays"`
+	MonthDay    int             `json:"month_day" yaml:"month_day"`
+	At          string          `json:"at" yaml:"at"`
+	Enabled     bool            `json:"enabled" yaml:"enabled"`
+	// Deprecated input fields: NormalizeConfig discards historical retention counts.
+	KeepWeekly   int  `json:"keep_weekly,omitempty" yaml:"keep_weekly,omitempty"`
+	KeepMonthly  int  `json:"keep_monthly,omitempty" yaml:"keep_monthly,omitempty"`
+	Private      bool `json:"private,omitempty" yaml:"private,omitempty"`
+	GraceMinutes int  `json:"grace_minutes,omitempty" yaml:"grace_minutes,omitempty"`
 }
 
 type Config struct {
@@ -309,12 +310,6 @@ func ValidateBackup(b Backup) error {
 	}
 	if b.MonthDay < 1 || b.MonthDay > 31 {
 		return errors.New("每月日期必须在 1～31 日之间")
-	}
-	if b.KeepWeekly < 0 || b.KeepWeekly > 1000 || b.KeepMonthly < 0 || b.KeepMonthly > 1000 || b.KeepWeekly+b.KeepMonthly == 0 {
-		return errors.New("请设置有效的备份保留数量")
-	}
-	if b.KeepWeekly > 0 && b.KeepMonthly > 0 && int64(b.KeepWeekly)*7*86400 > minimumMonthSpan(1, b.KeepMonthly) {
-		return errors.New("每周备份的保留跨度不能超过每月档")
 	}
 	return nil
 }

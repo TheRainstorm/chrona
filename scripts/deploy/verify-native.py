@@ -80,7 +80,7 @@ try:
     with open('/dev/zvol/'+vol,'r+b',buffering=0) as f:f.write(b'chrona-volume-v1'.ljust(4096,b'.'))
     now=datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
     def backup(identifier,source,destination,host):
-        return dict(id=identifier,name=identifier,datasets=[dict(source=source,destination=destination)],host=host,port=2202,cadence='monthly',weekdays=[1],month_day=1,at='23:00',enabled=False,keep_weekly=0,keep_monthly=1,grace_minutes=90)
+        return dict(id=identifier,name=identifier,datasets=[dict(source=source,destination=destination)],host=host,port=2202,cadence='monthly',weekdays=[1],month_day=1,at='23:00',enabled=False,grace_minutes=90)
     config=dict(version=3,timezone='Asia/Shanghai',jitter_seconds=10,policies=[],datasets=[dict(name=source,disabled=True,snapshot=dict(start_at=now.replace(hour=0,minute=0,second=0,microsecond=0).isoformat(),keep=dict(quarter_hourly=0,hourly=3,daily=7,weekly=0,monthly=0))) for source in (fs,vol)],backups=[backup('verify-fs-local',fs,local_root+'/received-fs','local'),backup('verify-fs-ssh',fs,remote_root+'/received-fs','n5105'),backup('verify-vol-local',vol,local_root+'/received-vol','local'),backup('verify-fs-resume',fs,local_root+'/received-resume','local')])
     (work/'config.json').write_text(json.dumps(config,indent=2))
     cmd(['systemd-run','--unit='+unit,'--collect','--property=UMask=0077','--setenv=PATH='+str(work/'bin')+':/usr/sbin:/usr/bin:/sbin:/bin',binary,'-mode','zfs','-enable-zfs-writes','-listen','127.0.0.1:8097','-config',str(work/'config.json'),'-state',str(work/'state.json'),'-ssh-control-dir','/run/'+uid+'/ssh'])

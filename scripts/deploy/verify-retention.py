@@ -178,14 +178,14 @@ def main():
         def managed(dataset):
             return {'name': dataset, 'disabled': True, 'snapshot': {
                 'start_at': now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
-                'keep': {'quarter_hourly': 0, 'hourly': 3, 'daily': 7, 'weekly': 0, 'monthly': 0}}}
+                'keep': {'quarter_hourly': 0, 'hourly': 0, 'daily': 0, 'weekly': 0, 'monthly': 12} if dataset in [job['source'] for job in jobs] else {'quarter_hourly': 0, 'hourly': 3, 'daily': 7, 'weekly': 0, 'monthly': 0}}}
         config = {'version': 3, 'timezone': 'Asia/Shanghai', 'jitter_seconds': 0, 'policies': [],
                   'datasets': [managed(name) for name in [plain, keep_path] + [j['source'] for j in jobs]] +
                               [{'name': child, 'snapshot_mode': 'none'}],
                   'backups': [{'id': j['id'], 'name': j['id'], 'host': ssh_host if j['remote'] else 'local',
                                'port': ssh_port if j['remote'] else 22, 'cadence': 'monthly',
                                'weekdays': [1], 'month_day': 1, 'at': '23:00', 'enabled': False,
-                               'keep_weekly': 0, 'keep_monthly': 1, 'grace_minutes': 60,
+                               'grace_minutes': 60,
                                'datasets': [{'source': j['source'], 'destination': j['destination']}]}
                               for j in jobs]}
         (work / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
@@ -235,6 +235,10 @@ def main():
             first = run_job(job)
             transfer = first['transfers'][job['source']]
             assert transfer['mode'] == 'incremental'
+            expected = int(datetime.datetime.fromisoformat(transfer['next_backup_at'].replace('Z', '+00:00')).timestamp()) + 60 * 60
+            assert int(prop(first['bases'][job['source']], 'chrona:expires')) == expected
+            assert int(prop(transfer['remote_snapshot'], 'chrona:expires', job['remote'])) == expected
+            check(job['id'] + ': both new backup expiries equal next run plus buffer despite year-long snapshot policy')
             assert not exists(job['old'])
             assert not exists(job['destination'] + '@legacy-expired-seed', job['remote'])
             assert exists(job['keep']) and exists(job['destination'] + '@archive-KEEP', job['remote'])
@@ -250,6 +254,10 @@ def main():
             second = run_job(job)
             transfer = second['transfers'][job['source']]
             assert transfer['mode'] == 'incremental'
+            expected = int(datetime.datetime.fromisoformat(transfer['next_backup_at'].replace('Z', '+00:00')).timestamp()) + 60 * 60
+            assert int(prop(second['bases'][job['source']], 'chrona:expires')) == expected
+            assert int(prop(transfer['remote_snapshot'], 'chrona:expires', job['remote'])) == expected
+            check(job['id'] + ': subsequent backup uses identical next-run expiry at both ends')
             base_name = second['bases'][job['source']]
             assert prop(base_name, 'guid') == prop(transfer['remote_snapshot'], 'guid', job['remote'])
             assert 'chrona:' + job['id'] in cmd(['zfs', 'holds', '-H', base_name]).stdout

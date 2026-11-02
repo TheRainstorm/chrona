@@ -1,6 +1,8 @@
 package chrona
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -68,16 +70,13 @@ func backupProtection(b Backup, loc *time.Location, now time.Time) (next, until 
 
 func backupReplicaExpiry(b Backup, loc *time.Location, now time.Time) time.Time {
 	_, expiry := backupProtection(b, loc, now)
-	var retention time.Time
-	if b.Cadence == "monthly" {
-		retention = addMonthsClamped(now.In(loc), b.KeepMonthly)
-	} else {
-		retention = now.AddDate(0, 0, b.KeepWeekly*7)
-	}
-	if retention.After(expiry) {
-		expiry = retention
-	}
 	return expiry
+}
+
+// Backup bases have their own names and lifetime, independent of snapshot policies.
+func backupSnapshotName(dataset, task string, now time.Time) string {
+	hash := sha256.Sum256([]byte(task))
+	return fmt.Sprintf("%s@%s%s_b%x_%x", dataset, SnapshotPrefix, now.UTC().Format("20060102T150405Z"), hash[:3], now.Nanosecond())
 }
 
 func makeReplica(b Backup, binding BackupDataset, source Snapshot, expiry time.Time) ReplicaSnapshot {

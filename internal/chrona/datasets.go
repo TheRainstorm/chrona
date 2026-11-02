@@ -45,6 +45,8 @@ func NormalizeConfig(c Config) Config {
 	}
 	for i := range r.Backups {
 		r.Backups[i].Datasets = append([]BackupDataset{}, r.Backups[i].Datasets...)
+		r.Backups[i].KeepWeekly = 0
+		r.Backups[i].KeepMonthly = 0
 	}
 	if c.Version == 2 {
 		for i, p := range r.Policies {

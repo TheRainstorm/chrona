@@ -2,7 +2,6 @@ package chrona
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strconv"
@@ -104,6 +103,13 @@ func (a *App) runNativeBackup(ctx context.Context, c Config, b Backup) error {
 		total += result.bytes
 	}
 	now := time.Now()
+	loc, _ := time.LoadLocation(c.Timezone)
+	for i := range results {
+		// Later leaves may finish after an earlier leaf's next scheduled run.
+		if err := refreshNativeBackupProtection(ctx, b, loc, endpoint, &results[i], now); err != nil {
+			return err
+		}
+	}
 	// Every receiver has been verified and protected. Advance all recorded bases together.
 	a.mu.Lock()
 	state := a.state.Backups[b.ID]
@@ -248,18 +254,9 @@ func (a *App) nativeCopyLeaf(ctx context.Context, c Config, b Backup, receiver n
 			return result, err
 		}
 	}
-	policy, _, ok := c.ResolveSnapshot(binding.Source)
-	if !ok {
-		policy = Policy{Dataset: binding.Source, Keep: Keep{Weekly: b.KeepWeekly, Monthly: b.KeepMonthly}}
-	}
-	event := ManualEvent(policy, loc, now)
-	if event.ExpiresAt.Before(until) {
-		event.ExpiresAt = until
-	}
-	hash := sha256.Sum256([]byte(b.ID))
-	suffix := fmt.Sprintf("%s%s_b%x_%x", SnapshotPrefix, now.UTC().Format("20060102T150405Z"), hash[:3], now.Nanosecond())
-	name := binding.Source + "@" + suffix
-	if _, err = source.run(ctx, "snapshot", "-o", ExpiryProperty+"="+strconv.FormatInt(event.ExpiresAt.Unix(), 10), name); err != nil {
+	name := backupSnapshotName(binding.Source, b.ID, now)
+	suffix := strings.SplitN(name, "@", 2)[1]
+	if _, err = source.run(ctx, "snapshot", "-o", ExpiryProperty+"="+strconv.FormatInt(until.Unix(), 10), name); err != nil {
 		return result, err
 	}
 	if err = source.hold(ctx, name, tag); err != nil {
@@ -319,8 +316,7 @@ func (a *App) nativeCopyLeaf(ctx context.Context, c Config, b Backup, receiver n
 	if err = source.expiry(ctx, name, until); err != nil {
 		return result, err
 	}
-	expiry := backupReplicaExpiry(b, loc, now)
-	if err = receiver.expiry(ctx, received.Name, expiry); err != nil {
+	if err = receiver.expiry(ctx, received.Name, until); err != nil {
 		return result, err
 	}
 	if err = receiver.hold(ctx, received.Name, tag); err != nil {
@@ -337,10 +333,12 @@ func (a *App) nativeCopyLeaf(ctx context.Context, c Config, b Backup, receiver n
 	if err != nil {
 		return result, err
 	}
-	expiry = time.Unix(unix, 0)
 	sent.HeldBy = []string{tag}
+	if sent.ExpiresAt.Before(until) {
+		sent.ExpiresAt = until
+	}
 	received.HeldBy = []string{tag}
-	received.ExpiresAt = expiry
+	received.ExpiresAt = time.Unix(unix, 0)
 	received.Managed = true
 	result.source = *sent
 	result.replica = ReplicaSnapshot{Snapshot: *received, TaskID: b.ID, Host: b.Host, Port: b.Port, SourceSnapshot: sent.Name}
@@ -351,6 +349,30 @@ func (a *App) nativeCopyLeaf(ctx context.Context, c Config, b Backup, receiver n
 	}
 	result.transfer = TransferResult{Mode: mode, Base: baseName, RemoteSnapshot: received.Name, NextBackupAt: next, ProtectedUntil: until}
 	return result, nil
+}
+
+// Recheck before committing a batch without issuing extra commands for normal runs.
+// Any failure leaves the previously committed common bases and their holds intact.
+func refreshNativeBackupProtection(ctx context.Context, b Backup, loc *time.Location, receiver nativeEndpoint, result *nativeResult, now time.Time) error {
+	next, until := backupProtection(b, loc, now)
+	if !until.After(result.transfer.ProtectedUntil) {
+		return nil
+	}
+	if err := (nativeEndpoint{}).expiry(ctx, result.source.Name, until); err != nil {
+		return err
+	}
+	if err := receiver.expiry(ctx, result.replica.Name, until); err != nil {
+		return err
+	}
+	if result.source.ExpiresAt.Before(until) {
+		result.source.ExpiresAt = until
+	}
+	if result.replica.ExpiresAt.Before(until) {
+		result.replica.ExpiresAt = until
+	}
+	result.transfer.NextBackupAt = next
+	result.transfer.ProtectedUntil = until
+	return nil
 }
 
 func cleanupNativeSnapshots(ctx context.Context, endpoint nativeEndpoint, dataset, current, tag string, protected map[string]bool, deferCleanup bool) error {

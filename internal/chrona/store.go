@@ -148,8 +148,8 @@ func DefaultConfig(now time.Time) Config {
 			{ID: "ssd", Label: "SSD 轻量保护", Datasets: []string{"rpool/data/vm-201-ares-root", "rpool/data/vm-201-ares-docker", "rpool/ROOT/pve-1"}, StartAt: start, Enabled: true, Keep: ssd},
 		},
 		Backups: []Backup{
-			{ID: "archive-n5105", Name: "文档异机备份", Datasets: []BackupDataset{{Source: "Saturn/Archive", Destination: "rpool/backup/Archive"}}, Host: "n5105", Port: 2202, Cadence: "weekly", Weekdays: []int{1, 5}, MonthDay: 1, At: "05:45", Enabled: true, KeepWeekly: 8, KeepMonthly: 12},
-			{ID: "ares-saturn", Name: "Ares 系统与应用", Datasets: []BackupDataset{{Source: "rpool/data/vm-201-ares-root", Destination: "Saturn/backup/ares-root"}, {Source: "rpool/data/vm-201-ares-docker", Destination: "Saturn/backup/ares-docker"}}, Host: "nas-pve", Port: 2202, Cadence: "monthly", Weekdays: []int{0}, MonthDay: 1, At: "04:30", Enabled: true, KeepWeekly: 0, KeepMonthly: 6},
+			{ID: "archive-n5105", Name: "文档异机备份", Datasets: []BackupDataset{{Source: "Saturn/Archive", Destination: "rpool/backup/Archive"}}, Host: "n5105", Port: 2202, Cadence: "weekly", Weekdays: []int{1, 5}, MonthDay: 1, At: "05:45", Enabled: true},
+			{ID: "ares-saturn", Name: "Ares 系统与应用", Datasets: []BackupDataset{{Source: "rpool/data/vm-201-ares-root", Destination: "Saturn/backup/ares-root"}, {Source: "rpool/data/vm-201-ares-docker", Destination: "Saturn/backup/ares-docker"}}, Host: "nas-pve", Port: 2202, Cadence: "monthly", Weekdays: []int{0}, MonthDay: 1, At: "04:30", Enabled: true},
 		},
 	})
 }
@@ -218,20 +218,18 @@ func seedState(c Config, now time.Time) State {
 		b := c.EffectiveBackup(task, inventory...)
 		state := BackupState{Status: "success", LastSuccess: now.Add(-time.Duration(24+i*12) * time.Hour), Bytes: uint64(12+i*3) * 1024 * 1024 * 1024, Bases: map[string]string{}, Completed: map[string]time.Time{}}
 		for _, binding := range b.Datasets {
-			for j := range s.Snapshots {
-				if s.Snapshots[j].Dataset == binding.Source {
-					s.Snapshots[j].HeldBy = append(s.Snapshots[j].HeldBy, b.ID)
-					state.Bases[binding.Source] = s.Snapshots[j].Name
-					state.Completed[binding.Source] = state.LastSuccess
-					if state.LastSnapshot == "" {
-						state.LastSnapshot = s.Snapshots[j].Name
-					}
-					break
-				}
+			name := backupSnapshotName(binding.Source, b.ID, state.LastSuccess)
+			_, until := backupProtection(b, loc, now)
+			s.Snapshots = append(s.Snapshots, Snapshot{Name: name, Dataset: binding.Source, CreatedAt: state.LastSuccess, ExpiresAt: until, Used: mockBytes(name), HeldBy: []string{b.ID}, Managed: true})
+			state.Bases[binding.Source] = name
+			state.Completed[binding.Source] = state.LastSuccess
+			if state.LastSnapshot == "" {
+				state.LastSnapshot = name
 			}
 		}
 		s.Backups[b.ID] = state
 	}
+	sortSnapshots(s.Snapshots)
 	for i, p := range c.EffectivePolicies(inventory...) {
 		if !p.Enabled {
 			continue

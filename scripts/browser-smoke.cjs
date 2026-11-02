@@ -34,17 +34,27 @@ function formattedTime(value){
  await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(config)});
  const browser=await chromium.launch({executablePath:process.env.CHRONA_CHROME||'/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
  const context=await browser.newContext({viewport:{width:1500,height:1050},locale:'zh-CN',timezoneId:'Asia/Shanghai',reducedMotion:'reduce'});
- const page=await context.newPage(),errors=[],external=[],runs=[];
+ const page=await context.newPage(),errors=[],external=[],runs=[],configWrites=[];
  page.on('pageerror',error=>errors.push(error.message));
  page.on('request',request=>{
   if(!request.url().startsWith(base)&&!request.url().startsWith('data:'))external.push(request.url());
   if(request.method()==='POST'&&new URL(request.url()).pathname.endsWith('/run'))runs.push(new URL(request.url()));
+  if(request.method()==='PUT'&&new URL(request.url()).pathname==='/api/config')configWrites.push(request.postDataJSON());
  });
  const snapshot=name=>page.locator(`[data-dataset-row="${name}"]`);
  const backup=(name,id)=>page.locator(`[data-backup-dataset="${name}"]${id===undefined?'':`[data-backup-id="${id}"]`}`);
  const state=()=>api('/api/state');
  const resolved=async name=>(await state()).dataset_rows.find(row=>row.config.name===name);
  const binding=async(name,id)=>(await resolved(name)).backups.find(entry=>entry.task.id===id);
+ const noBackupKeep=task=>{assert.equal(Object.hasOwn(task,'keep_weekly'),false);assert.equal(Object.hasOwn(task,'keep_monthly'),false);};
+ const backupFields=async()=>{assert.equal(await page.locator('[name=keep_weekly],[name=keep_monthly]').count(),0);assert(await page.locator('[name=grace_minutes]').isEditable());};
+ const backupExpiry=async(name,id)=>{
+  const entry=await binding(name,id),transfer=entry.state.transfers[name],expected=Date.parse(transfer.next_backup_at)+(entry.task.grace_minutes||60)*60000;
+  assert(entry.replica);assert.equal(Date.parse(entry.replica.expires_at),expected,'Receiver expiry must be exactly the next backup plus its buffer');assert.equal(Date.parse(transfer.protected_until),expected);
+  const history=await api('/api/snapshots?'+new URLSearchParams({dataset:name,q:entry.replica.source_snapshot})),source=history.items.find(snapshot=>snapshot.name===entry.replica.source_snapshot);
+  assert(source,'The source common snapshot must exist');assert.equal(Date.parse(source.expires_at),expected,'Ordinary snapshot retention must not extend the backup source expiry');assert.equal(source.name.split('@')[1],entry.replica.name.split('@')[1]);
+  return entry;
+ };
  const overview=async kind=>{
   const current=await state(),value=async key=>page.locator(`.overview-card[data-stat="${key}"]`).getAttribute('data-value');assert.equal(await page.locator('.overview-card').count(),4);
   if(kind==='snapshots'){
@@ -162,12 +172,23 @@ function formattedTime(value){
    await search('第二目的地');assert.equal(await page.locator('[data-backup-dataset]').count(),1);
    await search('Saturn/Archive');assert.equal(await backup('Saturn/Archive').count(),2);await search('');
   });
+  await check('public backup rules save weekly or monthly frequency and editable buffer without historical keep counts',async()=>{
+   await page.locator('.public-section').evaluate(element=>element.open=true);await page.locator('[data-action=new-backup-policy]').click();await page.locator('#public-backup-form').waitFor();await backupFields();assert.equal(await page.locator('[name=grace_minutes]').inputValue(),'60');
+   await page.locator('[name=name]').fill('Browser cadence test');await page.locator('[name=host]').fill('demo-receiver');await page.locator('#backup-cadence').selectOption('monthly');assert(await page.locator('#monthday-field').isVisible());assert(await page.locator('#weekday-field').isHidden());await page.locator('[name=month_day]').fill('31');await page.locator('[name=grace_minutes]').fill('90');await save('#public-backup-form');
+   let created=(await state()).config.backups.find(task=>task.name==='Browser cadence test');assert(created);assert.equal(created.cadence,'monthly');assert.equal(created.month_day,31);assert.equal(created.grace_minutes,90);noBackupKeep(created);
+   await page.locator(`[data-public-backup="${created.id}"] [data-action=edit-backup-policy]`).click();await page.locator('#public-backup-form').waitFor();await backupFields();assert.equal(await page.locator('[name=grace_minutes]').inputValue(),'90');await page.locator('#backup-cadence').selectOption('weekly');assert(await page.locator('#weekday-field').isVisible());assert(await page.locator('#monthday-field').isHidden());
+   for(const day of await page.locator('.weekday').all())if((await day.getAttribute('aria-pressed')==='true')!==(await day.getAttribute('data-day')==='3'))await day.click();await page.locator('[name=grace_minutes]').fill('37');await save('#public-backup-form');
+   created=(await state()).config.backups.find(task=>task.id===created.id);assert.equal(created.cadence,'weekly');assert.deepEqual(created.weekdays,[3]);assert.equal(created.grace_minutes,37);noBackupKeep(created);
+   await page.locator(`[data-public-backup="${created.id}"] [data-action=edit-backup-policy]`).click();await page.locator('[data-action=delete-public-backup]').click();await page.locator('#public-backup-form').waitFor({state:'detached'});
+  });
   await check('adding another destination copies its row rule into an independent plan',async()=>{
    const before=await binding('Saturn/Archive','archive-secondary-test');
    await backup('Saturn/Archive','archive-secondary-test').locator('.row-actions [data-action=dataset-backup]:not([data-id])').click();await page.locator('#dataset-backup-form').waitFor();assert.equal(await page.locator('#backup-mode').inputValue(),'custom');assert.equal(await page.locator('[name=destination]').inputValue(),'');
-   for(const field of ['host','port','cadence','at','keep_weekly','keep_monthly'])assert.equal(await page.locator(`[name=${field}]`).inputValue(),String(before.task[field]));
+   await backupFields();for(const field of ['host','port','cadence','at','month_day'])assert.equal(await page.locator(`[name=${field}]`).inputValue(),String(before.task[field]));assert.equal(await page.locator('[name=grace_minutes]').inputValue(),String(before.task.grace_minutes||60));
+   await page.locator('#backup-cadence').selectOption('monthly');assert(await page.locator('#monthday-field').isVisible());assert(await page.locator('#weekday-field').isHidden());await page.locator('[name=month_day]').fill('28');await page.locator('[name=grace_minutes]').fill('23');
    await page.locator('[name=destination]').fill('rpool/backup/Archive-third-test');await save('#dataset-backup-form');
-   const created=(await resolved('Saturn/Archive')).backups.find(entry=>entry.destination==='rpool/backup/Archive-third-test');assert(created.task.private);assert.notEqual(created.task.id,before.task.id);assert.equal(await backup('Saturn/Archive').count(),3);assert.equal((await binding('Saturn/Archive','archive-secondary-test')).destination,before.destination);
+   const created=(await resolved('Saturn/Archive')).backups.find(entry=>entry.destination==='rpool/backup/Archive-third-test');assert(created.task.private);assert.notEqual(created.task.id,before.task.id);assert.equal(await backup('Saturn/Archive').count(),3);assert.equal((await binding('Saturn/Archive','archive-secondary-test')).destination,before.destination);assert.equal(created.task.cadence,'monthly');assert.equal(created.task.month_day,28);assert.equal(created.task.grace_minutes,23);noBackupKeep(created.task);
+   await backup('Saturn/Archive',created.task.id).locator('.row-actions [data-action=dataset-backup][data-id]').click();await page.locator('#dataset-backup-form').waitFor();await backupFields();assert.equal(await page.locator('[name=grace_minutes]').inputValue(),'23');await page.locator('#backup-cadence').selectOption('weekly');assert(await page.locator('#weekday-field').isVisible());await save('#dataset-backup-form');assert.equal((await binding('Saturn/Archive',created.task.id)).task.cadence,'weekly');
    const privateRow=backup('Saturn/Archive',created.task.id);await privateRow.locator('[data-action=toggle-backup]').click();await until(async()=>(await privateRow.locator('[data-action=toggle-backup]').getAttribute('aria-checked'))==='false');assert.equal(await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=toggle-backup]').getAttribute('aria-checked'),'true');await privateRow.locator('[data-action=toggle-backup]').click();await until(async()=>(await privateRow.locator('[data-action=toggle-backup]').getAttribute('aria-checked'))==='true');
    await backup('Saturn/Archive',created.task.id).locator('.row-actions [data-action=dataset-backup][data-id]').click();await page.locator('#backup-mode').selectOption('none');await save('#dataset-backup-form');assert.equal(await backup('Saturn/Archive').count(),2);assert.equal((await resolved('Saturn/Archive')).backups.length,2);
   });
@@ -176,9 +197,18 @@ function formattedTime(value){
    await backup('Saturn/Archive','archive-secondary-test').locator('.row-actions [data-action=dataset-backup][data-id]').click();await page.locator('#dataset-backup-form').waitFor();assert.equal(await page.locator('#backup-mode').inputValue(),'archive-secondary-test');assert.equal(await page.locator('#backup-mode option[value=inherit]').count(),0);
    await page.locator('[name=destination]').fill('rpool/backup/Archive-secondary-edited');await save('#dataset-backup-form');assert.equal((await binding('Saturn/Archive','archive-secondary-test')).destination,'rpool/backup/Archive-secondary-edited');assert.equal((await binding('Saturn/Archive','archive-n5105')).destination,originalBefore.destination);
    await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=run-backup]').click();await until(async()=>await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=toggle-backup]').isDisabled());assert(await backup('Saturn/Archive','archive-n5105').locator('[data-action=toggle-backup]').isDisabled());await until(async()=>!!(await binding('Saturn/Archive','archive-secondary-test')).state.completed?.['Saturn/Archive']);
-   const entry=await binding('Saturn/Archive','archive-secondary-test');assert(entry.replica);assert(new Date(entry.replica.expires_at)>new Date(entry.state.transfers['Saturn/Archive'].next_backup_at));assert.equal((await binding('Saturn/Archive','archive-n5105')).state.completed['Saturn/Archive'],originalBefore.state.completed['Saturn/Archive']);
+   const entry=await backupExpiry('Saturn/Archive','archive-secondary-test');assert.equal((await binding('Saturn/Archive','archive-n5105')).state.completed['Saturn/Archive'],originalBefore.state.completed['Saturn/Archive']);
    const request=runs.at(-1);assert.equal(request.pathname,'/api/backups/archive-secondary-test/run');assert.equal(request.searchParams.get('dataset'),'Saturn/Archive');
    await until(async()=>(await backup('Saturn/Archive','archive-secondary-test').locator('.backup-last').innerText()).includes(formattedTime(entry.state.completed['Saturn/Archive'])));assert(await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=run-backup]').isEnabled());assert(await backup('Saturn/Archive','archive-secondary-test').locator('[data-action=toggle-backup]').isEnabled());assert(await backup('Saturn/Archive','archive-n5105').locator('[data-action=toggle-backup]').isEnabled());
+  });
+  await check('monthly backups keep both common snapshots only until next run plus buffer even under a long source policy',async()=>{
+   const saved=(await state()).config,current=structuredClone(saved),name='Saturn/Archive',id='archive-secondary-test';
+   current.datasets=current.datasets.filter(dataset=>dataset.name!==name);current.datasets.push({name,snapshot:{start_at:fine.start_at,keep:{quarter_hourly:0,hourly:0,daily:0,weekly:0,monthly:12}}});const task=current.backups.find(task=>task.id===id);Object.assign(task,{cadence:'monthly',month_day:31,at:'05:17',grace_minutes:17});
+   await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(current)});const before=await binding(name,id),policy=(await resolved(name)).snapshot;
+   await api(`/api/policies/${encodeURIComponent(policy.id)}/run?dataset=${encodeURIComponent(name)}`,{method:'POST'});const ordinary=(await resolved(name)).latest_snapshot;assert(Date.parse(ordinary.expires_at)>Date.parse(before.next)+17*60000,'Fixture must have ordinary retention beyond the next monthly backup');
+   await page.reload({waitUntil:'networkidle'});await backup(name,id).locator('[data-action=run-backup]').click();await until(async()=>(await binding(name,id)).state.completed[name]!==before.state.completed[name]);const entry=await backupExpiry(name,id);assert.equal(entry.state.transfers[name].mode,'incremental');assert.equal(entry.state.transfers[name].base,before.replica.source_snapshot);assert.notEqual(entry.replica.source_snapshot,ordinary.name);
+   const history=await api('/api/snapshots?'+new URLSearchParams({dataset:name,q:ordinary.name}));assert.equal(history.items.find(snapshot=>snapshot.name===ordinary.name).expires_at,ordinary.expires_at,'An existing ordinary snapshot keeps its original expiry');
+   await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved)});await page.reload({waitUntil:'networkidle'});
   });
   await check('all backup datasets allow direct leaf plans and removal preserves the other destination',async()=>{
    await page.getByRole('button',{name:'全部数据集',exact:true}).click();assert.equal(await page.locator('[data-backup-dataset]').count(),14);
@@ -203,6 +233,9 @@ function formattedTime(value){
    await page.getByRole('link',{name:'快照',exact:true}).click();await page.getByRole('button',{name:'仅本级设置',exact:true}).click();await page.reload({waitUntil:'networkidle'});assert.equal(await page.locator('[data-action=dataset-scope].active').innerText(),'仅本级设置');
    assert.equal(await page.locator('.overview-grid').evaluate(element=>getComputedStyle(element).gridTemplateColumns.split(' ').length),2);assert(await snapshot('Saturn/APP/Immich').isVisible());for(const cell of ['.dataset-path','.snapshot-policy','.snapshot-keep','.snapshot-last','.snapshot-next'])assert(await snapshot('Saturn/APP/Immich').locator(cell).isVisible());assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    assert(await page.locator('.snapshot-table').evaluate(table=>[...table.querySelectorAll('.row-actions button')].every(button=>button.getBoundingClientRect().right<=table.getBoundingClientRect().right+1)));await page.screenshot({path:path.join(artifacts,'list-snapshots-mobile.png'),fullPage:true});assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+  });
+  await check('saved browser configuration and normalized YAML contain no obsolete backup keep fields',async()=>{
+   assert(configWrites.length>0);for(const config of configWrites)for(const task of config.backups)noBackupKeep(task);for(const task of (await state()).config.backups)noBackupKeep(task);assert(!/\bkeep_(weekly|monthly)\s*:/.test(await api('/api/config')));
   });
   fs.writeFileSync(path.join(artifacts,'browser-report.json'),JSON.stringify({checked_at:new Date().toISOString(),checks,errors,external,base},null,2)+'\n');console.log(`${checks.length} current-UI checks passed`);
  }catch(error){await page.screenshot({path:path.join(artifacts,'failure.png'),fullPage:true}).catch(()=>{});throw error;}

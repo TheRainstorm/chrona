@@ -1,7 +1,6 @@
 package chrona
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -52,6 +51,11 @@ func (a *App) finishDemoBackupLocked(b Backup, now time.Time) error {
 		transfers[source] = result
 	}
 	pending := []ReplicaSnapshot{}
+	pendingSources := []Snapshot{}
+	names := map[string]bool{}
+	for _, s := range a.state.Snapshots {
+		names[s.Name] = true
+	}
 	var totalBytes uint64
 	for _, binding := range b.Datasets {
 		if !a.config.IsLeafDataset(binding.Source, a.datasets...) {
@@ -67,33 +71,16 @@ func (a *App) finishDemoBackupLocked(b Backup, now time.Time) error {
 				}
 			}
 		}
-		policy, _, ok := a.config.ResolveSnapshot(binding.Source)
-		if !ok {
-			policy = Policy{ID: b.ID, Dataset: binding.Source, Keep: Keep{Weekly: b.KeepWeekly, Monthly: b.KeepMonthly}}
+		created := now
+		name := backupSnapshotName(binding.Source, b.ID, created)
+		for names[name] {
+			created = created.Add(time.Nanosecond)
+			name = backupSnapshotName(binding.Source, b.ID, created)
 		}
-		e := ManualEvent(policy, loc, now)
-		if e.ExpiresAt.Before(until) {
-			e.ExpiresAt = until
-		}
-		if err := a.snapshotLocked(context.Background(), policy, e); err != nil {
-			return err
-		}
-		name := binding.Source + "@" + SnapshotPrefix + e.PlannedAt.UTC().Format("20060102T150405Z")
-		var source *Snapshot
-		for i := range a.state.Snapshots {
-			if a.state.Snapshots[i].Name == name {
-				source = &a.state.Snapshots[i]
-				// A scheduled snapshot in the same second may already exist.
-				if source.ExpiresAt.Before(until) {
-					source.ExpiresAt = until
-				}
-				break
-			}
-		}
-		if source == nil {
-			return errors.New("备份源快照创建后未找到")
-		}
-		remote := makeReplica(b, binding, *source, backupReplicaExpiry(b, loc, now))
+		names[name] = true
+		source := Snapshot{Name: name, Dataset: binding.Source, CreatedAt: now, ExpiresAt: until, Used: mockBytes(name), HeldBy: []string{b.ID}, Managed: true}
+		pendingSources = append(pendingSources, source)
+		remote := makeReplica(b, binding, source, until)
 		pending = append(pending, remote)
 		mode := "full"
 		if common {
@@ -108,6 +95,7 @@ func (a *App) finishDemoBackupLocked(b Backup, now time.Time) error {
 	}
 	// Receiver snapshots represent a completed recv with chrona:expires set.
 	// Only after that has succeeded do we advance the common bases and release holds.
+	a.state.Snapshots = append(a.state.Snapshots, pendingSources...)
 	for _, pendingReplica := range pending {
 		replaced := false
 		for i, r := range a.state.Replicas {
@@ -126,10 +114,30 @@ func (a *App) finishDemoBackupLocked(b Backup, now time.Time) error {
 	}
 	a.state.Backups[b.ID] = BackupState{Status: "success", Progress: 100, LastSuccess: now, LastSnapshot: bases[b.Datasets[0].Source], Bases: bases, Completed: completed, Transfers: transfers, Bytes: totalBytes}
 	a.syncBackupHoldsLocked()
+	a.pruneDemoBackupSourcesLocked(b, now)
 	a.pruneReplicasLocked(now)
 	a.record("success", "backup", backupSources(b), fmt.Sprintf("模拟传输完成 · %d 个叶子数据集 · 基点至少保留至 %s", len(b.Datasets), until.Format("01-02 15:04")))
 	a.persistLocked()
 	return nil
+}
+
+// Match native post-success cleanup, including protection for other pending backups.
+func (a *App) pruneDemoBackupSourcesLocked(b Backup, now time.Time) {
+	sources := map[string]bool{}
+	for _, binding := range b.Datasets {
+		sources[binding.Source] = !a.hasUninitializedBackupLocked(binding.Source)
+	}
+	protected := a.protectedSnapshotNamesLocked()
+	kept := make([]Snapshot, 0, len(a.state.Snapshots))
+	for _, s := range a.state.Snapshots {
+		s = withSnapshotRetention(s)
+		if sources[s.Dataset] && !protected[s.Name] && snapshotExpired(s, now) {
+			continue
+		}
+		kept = append(kept, s)
+	}
+	a.state.Snapshots = kept
+	sortSnapshots(a.state.Snapshots)
 }
 
 func withoutHold(holds []string, id string) []string {

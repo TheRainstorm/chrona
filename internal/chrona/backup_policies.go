@@ -7,6 +7,7 @@ func (p BackupPolicy) apply(b Backup) Backup {
 }
 
 func (c Config) ResolveBackup(b Backup) Backup {
+	b = normalizeBackupTarget(b)
 	if b.Policy != "" {
 		for _, p := range c.BackupPolicies {
 			if p.ID == b.Policy {

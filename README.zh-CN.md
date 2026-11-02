@@ -14,6 +14,16 @@ Chrona 是一个 Go 可执行文件，内置 HTML/CSS/JavaScript 界面，无需
 - **概览**：展示快照占用和任务摘要，复用服务已有的缓存清单，不额外调用 SSH。
 - **文件配置**：在界面编辑或下载同一份 YAML，也可以直接修改文件并自动重载；无效配置不会替换正在使用的有效配置。
 
+## 界面预览
+
+快照页面展示策略、继承关系、保留数量和下次执行时间：
+
+![Chrona 快照管理界面](docs/images/snapshots.png)
+
+备份页面每个目的地独立一行，分别设置目标、时间策略和启用状态：
+
+![Chrona 备份管理界面](docs/images/backups.png)
+
 ## 先试用 Demo
 
 需要 Go 1.24 或更新版本：
@@ -87,7 +97,9 @@ backups: []
 
 通过 ZFS send/receive 进行本机跨池复制，或使用 `backup-nas` 这样的 SSH 主机别名传到远端。程序使用运行账号的 SSH 密钥、配置和已验证的主机密钥，并复用连接。本机目的地可设置 `host: local`。
 
-公共 `backup_policies` 只定义时间。每条 `backups` 独立设置目标 `host`、`port`、数据集路径与 `policy` 引用，同一个时间策略可以用于本机和不同远端。选择“自定义时间”可以单独设置这条备份的时间。旧的组合规则会在内存中拆分，任务 ID 和增量基点保持不变；保存时写入新格式。
+主机填 `nas-pve` 这样的 SSH 别名，端口留空，即使用 `~/.ssh/config` 中的 `HostName`、`User`、`Port` 和 `IdentityFile`。使用提供的 root systemd 服务时，配置文件位于运行 Chrona 的机器上的 `/root/.ssh/config`。也可以直接填写 `backup.example.com:2202` 或 `user@backup.example.com:2202`。显式填写的端口优先于 SSH 配置；两者都没有指定时，OpenSSH 默认使用 22。
+
+公共 `backup_policies` 只定义时间。每条 `backups` 独立设置目标 `host`、可选的 `port`、数据集路径与 `policy` 引用，同一个时间策略可以用于本机和不同远端。选择“自定义时间”可以单独设置这条备份的时间。旧的组合规则会在内存中拆分，任务 ID 和增量基点保持不变；保存时写入新格式。
 
 每周／每月频率只决定**何时执行备份**。备份不再设置周档、月档保留数量：每次新建专用快照，两端到期时间统一为**下一次备份时间 + `grace_minutes`**，默认缓冲 60 分钟，与数据集快照保留策略独立。已有快照期限不会因移除保留数量而缩短；旧配置的 `keep_weekly` / `keep_monthly` 兼容读取但不再生效，下次保存时移除。
 

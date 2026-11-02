@@ -60,7 +60,7 @@ type Backup struct {
 	Source      string          `json:"source,omitempty" yaml:"source,omitempty"` // v1 input only
 	Datasets    []BackupDataset `json:"datasets" yaml:"datasets"`
 	Host        string          `json:"host" yaml:"host"`
-	Port        int             `json:"port" yaml:"port"`
+	Port        int             `json:"port,omitempty" yaml:"port,omitempty"`
 	Destination string          `json:"destination,omitempty" yaml:"destination,omitempty"` // v1 input only
 	Cadence     string          `json:"cadence,omitempty" yaml:"cadence,omitempty"`
 	Weekdays    []int           `json:"weekdays,omitempty" yaml:"weekdays,omitempty"`
@@ -86,7 +86,6 @@ type Config struct {
 
 var datasetPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.:-]*(/[A-Za-z0-9_.:%-]+)*$`)
 var idPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,80}$`)
-var hostPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,180}$`)
 
 func DecodeConfig(data []byte) (Config, error) {
 	var c Config
@@ -324,8 +323,8 @@ func ValidateBackup(b Backup) error {
 		sources[d.Source] = true
 		targets[d.Destination] = true
 	}
-	if !hostPattern.MatchString(b.Host) || b.Port < 1 || b.Port > 65535 {
-		return errors.New("请填写有效的 SSH 主机和端口")
+	if _, _, err := parseSSHTarget(b.Host, b.Port); err != nil {
+		return err
 	}
 	return validateBackupTime(b)
 }

@@ -28,7 +28,7 @@ function formattedTime(value){
   {name:'rpool/data',policy:'ssd'},
   {name:'rpool/ROOT/pve-1',policy:'ssd'}
  ];
- const original=config.backups.find(task=>task.id==='archive-n5105');
+ const original=config.backups.find(task=>task.id==='archive-n5105');original.port=2202; // Legacy explicit overrides must remain editable.
  original.datasets.push({source:'Saturn/APP/Immich',destination:'rpool/backup/Immich-paused',disabled:true});
  config.backups.push({...structuredClone(original),id:'archive-secondary-test',name:'Archive 第二目的地',host:'local',port:22,datasets:[{source:'Saturn/Archive',destination:'rpool/backup/Archive-secondary'}]});
  await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(config)});
@@ -79,7 +79,7 @@ function formattedTime(value){
  const check=async(name,fn)=>{await fn();checks.push(name);console.log('PASS',name);};
  try{
   await check('snapshot rows show actual last snapshot time, full paths, named rules, retention and next time',async()=>{
-   await page.goto(base,{waitUntil:'networkidle'});
+   await page.goto(base,{waitUntil:'networkidle'});assert.equal(await page.title(),initial.hostname+' · Chrona');
    assert.deepEqual(await page.locator('nav a').allTextContents(),['快照','备份','配置']);
    assert.equal(await page.locator('[data-dataset-row]:visible').count(),10);
    for(const row of await page.locator('[data-dataset-row]').all())assert.equal(await row.locator('.dataset-path').innerText(),await row.getAttribute('data-dataset-row'));
@@ -171,8 +171,25 @@ function formattedTime(value){
   });
   await check('backup search matches exact destination and rule without aggregating another destination',async()=>{
    await search('Archive-secondary');assert.equal(await page.locator('[data-backup-dataset]').count(),1);assert.equal(await backup('Saturn/Archive','archive-secondary-test').count(),1);
-   await search('local');assert.equal(await page.locator('[data-backup-dataset]').count(),1);
+   await search('local');assert.equal(await page.locator('[data-backup-dataset]').count(),3);
    await search('Saturn/Archive');assert.equal(await backup('Saturn/Archive').count(),2);await search('');
+  });
+  await check('SSH aliases use an optional blank port, while explicit and inline ports round-trip independently',async()=>{
+   const saved=(await state()).config,policy=saved.backup_policies[0].id;
+   const grouped=saved.backups.find(task=>task.id==='archive-n5105');await backup('Saturn/Archive',grouped.id).locator('.row-actions [data-action=dataset-backup][data-id]').click();await page.locator('#dataset-backup-form').waitFor();assert.equal(await page.locator('[name=port]').inputValue(),String(grouped.port));await page.locator('[name=host]').fill(grouped.host+':'+grouped.port);await page.locator('[name=port]').fill('');await save('#dataset-backup-form');const unchanged=(await state()).config.backups.find(task=>task.id===grouped.id);assert.equal(unchanged.host,grouped.host);assert.equal(unchanged.port,grouped.port);assert.equal(unchanged.datasets.length,grouped.datasets.length,'Equivalent inline endpoint must not split a grouped job');
+   await page.locator('[data-action=new-dataset-backup]').click();await page.locator('#dataset-backup-form').waitFor();
+   assert.equal(await page.locator('[name=host]').inputValue(),'local');assert.equal(await page.locator('[name=port]').inputValue(),'');assert(await page.locator('[name=port]').isDisabled());assert.equal(await page.locator('[name=port]').evaluate(input=>input.required),false);
+   await page.locator('#backup-source').selectOption('Saturn/Archive');await page.locator('#backup-mode').selectOption(policy);await page.locator('[name=host]').fill('nas-pve');assert(await page.locator('[name=port]').isEditable());assert.equal(await page.locator('[name=port]').inputValue(),'');await page.locator('[name=destination]').fill('rpool/backup/Archive-alias-test');await page.screenshot({path:path.join(artifacts,'backup-ssh-alias-editor.png')});await save('#dataset-backup-form');
+   let task=(await state()).config.backups.find(task=>task.datasets.some(mapping=>mapping.destination==='rpool/backup/Archive-alias-test'));assert(task);const id=task.id;assert.equal(task.host,'nas-pve');assert.equal(Object.hasOwn(task,'port'),false);assert.equal(task.policy,policy);assert.equal(await backup('Saturn/Archive',id).locator('.backup-destination .dataset-path').innerText(),'nas-pve:rpool/backup/Archive-alias-test');
+   const reopen=async()=>{await backup('Saturn/Archive',id).locator('.row-actions [data-action=dataset-backup][data-id]').click();await page.locator('#dataset-backup-form').waitFor();};
+   await reopen();assert.equal(await page.locator('[name=port]').inputValue(),'');await page.locator('[name=port]').fill('2222');await save('#dataset-backup-form');task=(await state()).config.backups.find(task=>task.id===id);assert.equal(task.port,2222);assert.equal(task.host,'nas-pve');assert.equal(await backup('Saturn/Archive',id).locator('.backup-destination .dataset-path').innerText(),'nas-pve:2222:rpool/backup/Archive-alias-test');
+   await reopen();assert.equal(await page.locator('[name=port]').inputValue(),'2222');await page.locator('[name=port]').fill('');await save('#dataset-backup-form');assert.equal(Object.hasOwn((await state()).config.backups.find(task=>task.id===id),'port'),false,'Clearing an existing override must remove it');
+   await reopen();await page.locator('[name=host]').fill('backup.example.test:2233');await save('#dataset-backup-form');task=(await state()).config.backups.find(task=>task.id===id);assert.equal(task.host,'backup.example.test');assert.equal(task.port,2233);assert.equal(await backup('Saturn/Archive',id).locator('.backup-destination .dataset-path').innerText(),'backup.example.test:2233:rpool/backup/Archive-alias-test');
+   await reopen();assert.equal(await page.locator('[name=host]').inputValue(),'backup.example.test');assert.equal(await page.locator('[name=port]').inputValue(),'2233');await page.locator('[name=host]').fill('backup.example.test:2244');await page.locator('#save-editor').click();await until(async()=>await page.locator('.toast.error').count()>0);assert(await page.locator('#dataset-backup-form').isVisible());assert.equal((await state()).config.backups.find(task=>task.id===id).port,2233,'A conflicting port must not replace valid config');await page.locator('[name=port]').fill('');await save('#dataset-backup-form');
+   await reopen();await page.locator('[name=host]').fill('backupuser@[2001:db8::2]:2229');await page.locator('[name=port]').fill('');await save('#dataset-backup-form');task=(await state()).config.backups.find(task=>task.id===id);assert.equal(task.host,'backupuser@2001:db8::2');assert.equal(task.port,2229);assert.equal(await backup('Saturn/Archive',id).locator('.backup-destination .dataset-path').innerText(),'backupuser@[2001:db8::2]:2229:rpool/backup/Archive-alias-test');
+   await reopen();await page.locator('[name=host]').fill('backup.example.test');await page.locator('[name=port]').fill('');await save('#dataset-backup-form');task=(await state()).config.backups.find(task=>task.id===id);assert.equal(task.host,'backup.example.test');assert.equal(Object.hasOwn(task,'port'),false);
+   await reopen();await page.locator('[name=host]').fill('local');assert(await page.locator('[name=port]').isDisabled());assert.equal(await page.locator('[name=port]').inputValue(),'');await save('#dataset-backup-form');task=(await state()).config.backups.find(task=>task.id===id);assert.equal(task.host,'local');assert.equal(Object.hasOwn(task,'port'),false);
+   await api('/api/config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(saved)});await page.reload({waitUntil:'networkidle'});
   });
   await check('public backup rules save weekly or monthly frequency and editable buffer without historical keep counts',async()=>{
    await page.locator('.public-section').evaluate(element=>element.open=true);await page.locator('[data-action=new-backup-policy]').click();await page.locator('#public-backup-form').waitFor();await backupFields();assert.equal(await page.locator('[name=grace_minutes]').inputValue(),'60');
@@ -203,7 +220,7 @@ function formattedTime(value){
   await check('adding another destination copies its row rule into an independent plan',async()=>{
    const before=await binding('Saturn/Archive','archive-secondary-test');
    await backup('Saturn/Archive','archive-secondary-test').locator('.row-actions [data-action=dataset-backup]:not([data-id])').click();await page.locator('#dataset-backup-form').waitFor();assert.equal(await page.locator('#backup-mode').inputValue(),before.task.policy||'custom');assert.equal(await page.locator('[name=destination]').inputValue(),'');await page.locator('#backup-mode').selectOption('custom');
-   await backupFields();for(const field of ['host','port','cadence','at','month_day'])assert.equal(await page.locator(`[name=${field}]`).inputValue(),String(before.task[field]));assert.equal(await page.locator('[name=grace_minutes]').inputValue(),String(before.task.grace_minutes||60));
+   await backupFields();for(const field of ['host','cadence','at','month_day'])assert.equal(await page.locator(`[name=${field}]`).inputValue(),String(before.task[field]));assert.equal(await page.locator('[name=port]').inputValue(),String(before.task.port||''));assert.equal(await page.locator('[name=grace_minutes]').inputValue(),String(before.task.grace_minutes||60));
    await page.locator('#backup-cadence').selectOption('monthly');assert(await page.locator('#monthday-field').isVisible());assert(await page.locator('#weekday-field').isHidden());await page.locator('[name=month_day]').fill('28');await page.locator('[name=grace_minutes]').fill('23');
    await page.locator('[name=destination]').fill('rpool/backup/Archive-third-test');await save('#dataset-backup-form');
    const created=(await resolved('Saturn/Archive')).backups.find(entry=>entry.destination==='rpool/backup/Archive-third-test');assert(!created.task.policy);assert.notEqual(created.task.id,before.task.id);assert.equal(await backup('Saturn/Archive').count(),3);assert.equal((await binding('Saturn/Archive','archive-secondary-test')).destination,before.destination);assert.equal(created.task.cadence,'monthly');assert.equal(created.task.month_day,28);assert.equal(created.task.grace_minutes,23);noBackupKeep(created.task);
@@ -256,6 +273,7 @@ function formattedTime(value){
   await check('saved browser configuration and normalized YAML contain no obsolete backup keep fields',async()=>{
    assert(configWrites.length>0);for(const config of [...configWrites,(await state()).config]){for(const policy of config.backup_policies)cleanPolicy(policy);for(const task of config.backups){noBackupKeep(task);if(task.policy)for(const key of timingKeys)assert.equal(Object.hasOwn(task,key),false,'Referenced jobs must not duplicate '+key);}}assert(!/\bkeep_(weekly|monthly)\s*:/.test(await api('/api/config')));
   });
+  assert.equal(await page.title(),initial.hostname+' · Chrona');
   fs.writeFileSync(path.join(artifacts,'browser-report.json'),JSON.stringify({checked_at:new Date().toISOString(),checks,errors,external,base},null,2)+'\n');console.log(`${checks.length} current-UI checks passed`);
  }catch(error){await page.screenshot({path:path.join(artifacts,'failure.png'),fullPage:true}).catch(()=>{});throw error;}
  finally{await browser.close();}

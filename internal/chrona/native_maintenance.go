@@ -78,7 +78,7 @@ func (a *App) scheduleNativeMaintenanceLocked(old, new Config) {
 					for _, d := range next.Datasets {
 						if d.Source == binding.Source {
 							keepSource = true
-							keepTarget = d.Destination == binding.Destination && next.Host == previous.Host && next.Port == previous.Port
+							keepTarget = d.Destination == binding.Destination && sameBackupReceiver(next.Host, next.Port, previous.Host, previous.Port)
 						}
 					}
 				}
@@ -123,7 +123,7 @@ func (a *App) scheduleNativeMaintenanceLocked(old, new Config) {
 					a.state.Backups[b.ID] = state
 					for i := range a.state.Replicas {
 						r := &a.state.Replicas[i]
-						if r.Host == b.Host && r.Port == b.Port && r.Name == remoteName && r.ExpiresAt.Before(until) {
+						if sameBackupReceiver(r.Host, r.Port, b.Host, b.Port) && r.Name == remoteName && r.ExpiresAt.Before(until) {
 							r.ExpiresAt = until
 						}
 					}

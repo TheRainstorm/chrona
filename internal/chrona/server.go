@@ -420,7 +420,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/backups/{id}", a.handleDeleteBackup)
 	mux.HandleFunc("POST /api/backups/{id}/run", a.handleRunBackup)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "mode": a.opts.Mode, "version": "0.10.0"})
+		writeJSON(w, 200, map[string]string{"status": "ok", "mode": a.opts.Mode, "version": "0.10.1"})
 	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return authorize(a.opts.AuthSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

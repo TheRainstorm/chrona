@@ -53,9 +53,7 @@ func NormalizeConfig(c Config) Config {
 		r.Backups[i].KeepMonthly = 0
 		r.Backups[i].Weekdays = append([]int{}, r.Backups[i].Weekdays...)
 		r.Backups[i].PolicyName = ""
-		if r.Backups[i].Host == "local" && r.Backups[i].Port == 0 {
-			r.Backups[i].Port = 22
-		}
+		r.Backups[i] = normalizeBackupTarget(r.Backups[i])
 	}
 	if c.Version == 2 {
 		for i, p := range r.Policies {

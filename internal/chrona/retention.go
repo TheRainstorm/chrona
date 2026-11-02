@@ -106,7 +106,7 @@ func (a *App) protectedSnapshotNamesLocked() map[string]bool {
 			protected[base] = true
 			protected[binding.Destination+"@"+strings.SplitN(base, "@", 2)[1]] = true
 			for _, replica := range a.state.Replicas {
-				if replica.TaskID == task.ID && replica.Host == task.Host && replica.Port == task.Port && replica.Dataset == binding.Destination && replica.SourceSnapshot == base {
+				if replica.TaskID == task.ID && sameBackupReceiver(replica.Host, replica.Port, task.Host, task.Port) && replica.Dataset == binding.Destination && replica.SourceSnapshot == base {
 					protected[replica.Name] = true
 				}
 			}

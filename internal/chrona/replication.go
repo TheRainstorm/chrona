@@ -7,11 +7,15 @@ import (
 )
 
 func validateEffectiveBackupTargets(c Config, inventory []Dataset) error {
-	used := map[string]string{}
+	type target struct {
+		receiver backupReceiverAddress
+		dataset  string
+	}
+	used := map[target]string{}
 	for _, task := range c.Backups {
 		b := c.EffectiveBackup(task, inventory...)
 		for _, binding := range b.Datasets {
-			key := fmt.Sprintf("%s:%d:%s", b.Host, b.Port, binding.Destination)
+			key := target{backupReceiver(b.Host, b.Port), binding.Destination}
 			if previous, ok := used[key]; ok && previous != b.ID+":"+binding.Source {
 				return errors.New("多个备份任务指向相同目的数据集：" + binding.Destination)
 			}
@@ -100,7 +104,7 @@ func (a *App) finishDemoBackupLocked(b Backup, now time.Time) error {
 	for _, pendingReplica := range pending {
 		replaced := false
 		for i, r := range a.state.Replicas {
-			if r.Host == pendingReplica.Host && r.Port == pendingReplica.Port && r.Name == pendingReplica.Name {
+			if sameBackupReceiver(r.Host, r.Port, pendingReplica.Host, pendingReplica.Port) && r.Name == pendingReplica.Name {
 				if r.ExpiresAt.After(pendingReplica.ExpiresAt) {
 					pendingReplica.ExpiresAt = r.ExpiresAt
 				}
@@ -171,7 +175,7 @@ func (a *App) syncBackupHoldsForConfigLocked(c Config) {
 			r := &a.state.Replicas[i]
 			r.HeldBy = withoutHold(r.HeldBy, b.ID)
 			for _, binding := range effective {
-				if binding.Destination == r.Dataset && b.Host == r.Host && b.Port == r.Port && bases[binding.Source] == r.SourceSnapshot {
+				if binding.Destination == r.Dataset && sameBackupReceiver(b.Host, b.Port, r.Host, r.Port) && bases[binding.Source] == r.SourceSnapshot {
 					r.HeldBy = append(r.HeldBy, b.ID)
 					break
 				}
@@ -203,7 +207,7 @@ func (a *App) extendBackupProtectionLocked(now time.Time) {
 			}
 			for i := range a.state.Replicas {
 				r := &a.state.Replicas[i]
-				if r.Host == b.Host && r.Port == b.Port && r.Dataset == binding.Destination && r.SourceSnapshot == base && r.ExpiresAt.Before(until) {
+				if sameBackupReceiver(r.Host, r.Port, b.Host, b.Port) && r.Dataset == binding.Destination && r.SourceSnapshot == base && r.ExpiresAt.Before(until) {
 					r.ExpiresAt = until
 				}
 			}

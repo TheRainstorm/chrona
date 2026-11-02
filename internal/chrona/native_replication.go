@@ -129,7 +129,7 @@ func (a *App) runNativeBackup(ctx context.Context, c Config, b Backup) error {
 		state.Transfers[r.binding.Source] = r.transfer
 		replaced := false
 		for i, old := range a.state.Replicas {
-			if old.Host == b.Host && old.Port == b.Port && old.Name == r.replica.Name {
+			if sameBackupReceiver(old.Host, old.Port, b.Host, b.Port) && old.Name == r.replica.Name {
 				a.state.Replicas[i] = r.replica
 				replaced = true
 				break

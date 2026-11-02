@@ -3,6 +3,8 @@
 
 Required: CHRONA_VERIFY_BINARY=/absolute/path/to/candidate
 Optional: CHRONA_RETENTION_SSH_HOST=n5105 CHRONA_RETENTION_SSH_PORT=2202
+Optional: CHRONA_RETENTION_USE_SSH_CONFIG=1 omits the application's SSH port,
+so the configured host alias must supply it; the harness still uses SSH_PORT.
 No production config, service, snapshot or dataset is changed. The temporary app
 has automatic schedules disabled; each test action targets a UUID dataset.
 Creation times cannot be backdated: old default-expiry cases belong in unit tests.
@@ -29,6 +31,9 @@ def main():
         raise SystemExit('Set CHRONA_VERIFY_BINARY to an executable candidate binary')
     ssh_host = os.environ.get('CHRONA_RETENTION_SSH_HOST', '')
     ssh_port = int(os.environ.get('CHRONA_RETENTION_SSH_PORT', '22'))
+    use_ssh_config = os.environ.get('CHRONA_RETENTION_USE_SSH_CONFIG', '') == '1'
+    if use_ssh_config and not ssh_host:
+        raise SystemExit('SSH config verification requires CHRONA_RETENTION_SSH_HOST')
     if ssh_host and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@-]*', ssh_host):
         raise SystemExit('Invalid SSH host')
     if not 1 <= ssh_port <= 65535:
@@ -41,7 +46,7 @@ def main():
     runtime = pathlib.Path('/run') / uid
     control_dir = runtime / 'ssh'
     control_dir.mkdir(parents=True, mode=0o700)
-    report = {'id': uid, 'binary': binary, 'checks': [],
+    report = {'id': uid, 'binary': binary, 'checks': [], 'ssh_port_from_config': use_ssh_config,
               'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat()}
     created_roots = []
     process = None
@@ -191,6 +196,10 @@ def main():
                                'port': ssh_port if j['remote'] else 22, 'policy': 'shared-time', 'enabled': False,
                                'datasets': [{'source': j['source'], 'destination': j['destination']}]}
                               for j in jobs]}
+        if use_ssh_config:
+            for task in config['backups']:
+                if task['host'] == ssh_host:
+                    task.pop('port')
         (work / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
         log = (work / 'app.log').open('wb')
         env = dict(os.environ, PATH='/usr/sbin:/usr/bin:/sbin:/bin')
@@ -214,6 +223,9 @@ def main():
         assert not {'host', 'port', 'datasets'}.intersection(loaded['backup_policies'][0])
         assert all(job['policy'] == 'shared-time' and 'cadence' not in job for job in loaded['backups'])
         check('one timing-only policy is shared by independently configured local/SSH receivers')
+        if use_ssh_config:
+            assert all('port' not in job for job in loaded['backups'] if job['host'] == ssh_host)
+            check('SSH alias keeps its application port omitted and delegates connection settings to OpenSSH')
         buffer_minutes = 60
         items = {item['name']: item for item in api('/api/snapshots?' + urllib.parse.urlencode({'dataset': plain}))['items']}
         for name in (fresh, invalid):
@@ -261,7 +273,7 @@ def main():
                 assert before['config']['backups'] == after['config']['backups']
                 for old in before['backups']:
                     new = next(row for row in after['backups'] if row['task']['id'] == old['task']['id'])
-                    assert new['task']['host'] == old['task']['host'] and new['task']['port'] == old['task']['port']
+                    assert new['task']['host'] == old['task']['host'] and new['task'].get('port', 0) == old['task'].get('port', 0)
                     assert new['task']['month_day'] == 2 and new['task']['at'] == '22:15' and new['task']['grace_minutes'] == 90
                     for key in ('bases', 'completed'):
                         assert new['state'].get(key) == old['state'].get(key)

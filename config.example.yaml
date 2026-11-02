@@ -37,7 +37,6 @@ backups:
   - id: ares-saturn
     name: Ares 系统与应用
     host: local
-    port: 22
     policy: weekly
     enabled: true
     datasets:
@@ -49,8 +48,9 @@ backups:
   # 备份按源数据集显式绑定，不会从父级继承。
   - id: app-vault
     name: 应用异机备份
+    # 留空端口，使用运行账号 ~/.ssh/config 中的 Host / Port / User。
+    # 也可以填写 backup.example.com:2202，或显式设置 port: 2202。
     host: backup-nas
-    port: 22
     policy: weekly
     enabled: true
     datasets:

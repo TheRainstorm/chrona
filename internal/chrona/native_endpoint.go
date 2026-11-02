@@ -21,8 +21,9 @@ type nativeEndpoint struct {
 }
 
 func (a *App) endpoint(b Backup) nativeEndpoint {
+	b = normalizeBackupTarget(b)
 	host := b.Host
-	if host == "local" || host == "localhost" || host == "127.0.0.1" || host == a.hostname {
+	if literalLocalHost(host) || host == a.hostname {
 		host = ""
 	}
 	return nativeEndpoint{host: host, port: b.Port, controlDir: a.opts.SSHControlDir}
@@ -38,7 +39,10 @@ func (e nativeEndpoint) command(ctx context.Context, args ...string) *exec.Cmd {
 	if e.controlDir != "" {
 		sshArgs = append(sshArgs, "-o", "ControlMaster=auto", "-o", "ControlPersist=600", "-o", "ControlPath="+filepath.Join(e.controlDir, "%C"))
 	}
-	sshArgs = append(sshArgs, "-p", strconv.Itoa(e.port), e.host)
+	if e.port != 0 {
+		sshArgs = append(sshArgs, "-p", strconv.Itoa(e.port))
+	}
+	sshArgs = append(sshArgs, e.host)
 	remote := []string{"env", "LC_ALL=C", "zfs"}
 	remote = append(remote, args...)
 	quoted := make([]string, len(remote))

@@ -148,8 +148,8 @@ func DefaultConfig(now time.Time) Config {
 			{ID: "ssd", Label: "SSD 轻量保护", Datasets: []string{"rpool/data/vm-201-ares-root", "rpool/data/vm-201-ares-docker", "rpool/ROOT/pve-1"}, StartAt: start, Enabled: true, Keep: ssd},
 		},
 		Backups: []Backup{
-			{ID: "archive-n5105", Name: "文档异机备份", Datasets: []BackupDataset{{Source: "Saturn/Archive", Destination: "rpool/backup/Archive"}}, Host: "n5105", Port: 2202, Cadence: "weekly", Weekdays: []int{1, 5}, MonthDay: 1, At: "05:45", Enabled: true},
-			{ID: "ares-saturn", Name: "Ares 系统与应用", Datasets: []BackupDataset{{Source: "rpool/data/vm-201-ares-root", Destination: "Saturn/backup/ares-root"}, {Source: "rpool/data/vm-201-ares-docker", Destination: "Saturn/backup/ares-docker"}}, Host: "nas-pve", Port: 2202, Cadence: "monthly", Weekdays: []int{0}, MonthDay: 1, At: "04:30", Enabled: true},
+			{ID: "archive-n5105", Name: "文档异机备份", Datasets: []BackupDataset{{Source: "Saturn/Archive", Destination: "rpool/backup/Archive"}}, Host: "n5105", Cadence: "weekly", Weekdays: []int{1, 5}, MonthDay: 1, At: "05:45", Enabled: true},
+			{ID: "ares-saturn", Name: "Ares 系统与应用", Datasets: []BackupDataset{{Source: "rpool/data/vm-201-ares-root", Destination: "Saturn/backup/ares-root"}, {Source: "rpool/data/vm-201-ares-docker", Destination: "Saturn/backup/ares-docker"}}, Host: "local", Cadence: "monthly", Weekdays: []int{0}, MonthDay: 1, At: "04:30", Enabled: true},
 		},
 	})
 }

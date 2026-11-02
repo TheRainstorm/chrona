@@ -191,7 +191,7 @@ func TestCustomBackupTimeAndLocalDefaultRemainIndependent(t *testing.T) {
 	if err := ValidateConfig(c); err != nil {
 		t.Fatal(err)
 	}
-	if c.Backups[2].Port != 22 || c.Backups[2].Policy != "" {
+	if c.Backups[2].Port != 0 || c.Backups[2].Policy != "" {
 		t.Fatal("local/custom normalization failed")
 	}
 	c.BackupPolicies[0].At = "09:09"

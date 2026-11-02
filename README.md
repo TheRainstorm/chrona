@@ -14,6 +14,16 @@ Chrona is one Go binary with an embedded HTML/CSS/JavaScript interface. It needs
 - **Overview:** read snapshot space usage and task summaries from the service’s existing cached inventory, without additional SSH calls.
 - **Configuration:** edit or download the same YAML file from the UI. File changes reload automatically; invalid changes leave the working configuration intact.
 
+## Screenshots
+
+Snapshot policies, inherited rules and upcoming runs:
+
+![Chrona snapshot dashboard](docs/images/snapshots.png)
+
+Each backup destination has its own target, timing policy and enable switch:
+
+![Chrona backup dashboard](docs/images/backups.png)
+
 ## Try the demo
 
 Requires Go 1.24 or newer:
@@ -87,7 +97,9 @@ Cleanup follows successful snapshot creation or replication in the exact dataset
 
 Backups use ZFS send/receive, locally across pools or through an SSH host alias such as `backup-nas`. The service uses its account’s SSH keys/configuration and verified host keys, with connection reuse. Use `host: local` for a local receiver.
 
-Public `backup_policies` define timing only. Each `backups` entry chooses its own `host`, `port`, destination datasets and `policy` reference, so one schedule can serve local and remote targets. Select **Custom timing** for a schedule used only by that backup. Older combined rules migrate in memory without changing task IDs or incremental bases; saving writes the separated format.
+Enter an SSH alias such as `nas-pve` and leave the port blank to use `~/.ssh/config`, including its `HostName`, `User`, `Port` and `IdentityFile`. With the supplied root systemd service, that file is `/root/.ssh/config` on the machine running Chrona. Direct hosts such as `backup.example.com:2202` or `user@backup.example.com:2202` are also supported. An explicit port overrides the SSH configuration; when neither specifies one, OpenSSH uses port 22.
+
+Public `backup_policies` define timing only. Each `backups` entry chooses its own `host`, optional `port`, destination datasets and `policy` reference, so one schedule can serve local and remote targets. Select **Custom timing** for a schedule used only by that backup. Older combined rules migrate in memory without changing task IDs or incremental bases; saving writes the separated format.
 
 The weekly/monthly frequency controls **when a backup runs**. Backup snapshots have no weekly/monthly retention counts: each run creates a dedicated snapshot with the same expiry at both ends, **next scheduled backup + `grace_minutes`** (default 60 minutes). This is separate from dataset snapshot retention. Removing retention counts does not shorten existing snapshot expiries; obsolete `keep_weekly` / `keep_monthly` config keys are accepted but ignored and omitted on the next save.
 

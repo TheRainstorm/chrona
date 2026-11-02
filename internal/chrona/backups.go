@@ -86,7 +86,7 @@ func makeReplica(b Backup, binding BackupDataset, source Snapshot, expiry time.T
 
 func findReplica(replicas []ReplicaSnapshot, b Backup, binding BackupDataset, base string) *ReplicaSnapshot {
 	for _, r := range replicas {
-		if r.Host == b.Host && r.Port == b.Port && r.Dataset == binding.Destination && r.SourceSnapshot == base {
+		if sameBackupReceiver(r.Host, r.Port, b.Host, b.Port) && r.Dataset == binding.Destination && r.SourceSnapshot == base {
 			copy := r
 			return &copy
 		}

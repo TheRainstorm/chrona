@@ -30,10 +30,10 @@ func (a *App) reconcileBackupsLocked(old, new Config) {
 		for _, d := range previous.Datasets {
 			previousTargets[d.Source] = d.Destination
 		}
-		changed := previous.Host != b.Host || previous.Port != b.Port || len(targets) != len(previousTargets)
+		changed := !sameBackupReceiver(previous.Host, previous.Port, b.Host, b.Port) || len(targets) != len(previousTargets)
 		bases, completed, transfers := map[string]string{}, map[string]time.Time{}, map[string]TransferResult{}
 		for source, destination := range targets {
-			if previousTargets[source] != destination || previous.Host != b.Host || previous.Port != b.Port {
+			if previousTargets[source] != destination || !sameBackupReceiver(previous.Host, previous.Port, b.Host, b.Port) {
 				changed = true
 				continue
 			}
@@ -96,7 +96,7 @@ func (a *App) reconcileBackupsLocked(old, new Config) {
 			}
 			for i := range a.state.Replicas {
 				r := &a.state.Replicas[i]
-				if r.TaskID == previousID && r.Host == b.Host && r.Port == b.Port && r.Dataset == binding.Destination && r.SourceSnapshot == base {
+				if r.TaskID == previousID && sameBackupReceiver(r.Host, r.Port, b.Host, b.Port) && r.Dataset == binding.Destination && r.SourceSnapshot == base {
 					r.TaskID = id
 				}
 			}
@@ -135,7 +135,7 @@ func (a *App) reconcileBackupsLocked(old, new Config) {
 				continue
 			}
 			b, exists := newByID[id]
-			if !exists || b.Host != r.Host || b.Port != r.Port {
+			if !exists || !sameBackupReceiver(b.Host, b.Port, r.Host, r.Port) {
 				continue
 			}
 			for _, binding := range b.Datasets {
@@ -151,5 +151,6 @@ func (a *App) reconcileBackupsLocked(old, new Config) {
 }
 
 func sameBackupTarget(a Backup, x BackupDataset, b Backup, y BackupDataset) bool {
-	return a.Host == b.Host && a.Port == b.Port && x.Source == y.Source && x.Destination == y.Destination
+	a, b = normalizeBackupTarget(a), normalizeBackupTarget(b)
+	return sameBackupReceiver(a.Host, a.Port, b.Host, b.Port) && x.Source == y.Source && x.Destination == y.Destination
 }

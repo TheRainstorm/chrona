@@ -20,5 +20,68 @@
 .dataset-toolbar-left{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.scope-control{display:flex;gap:2px;background:#f3f7f4;padding:3px;border-radius:6px}.scope-control button{background:transparent;border:0;border-radius:4px;color:#8a9f91;font-size:10px;padding:5px 9px}.scope-control button.active{background:white;color:#238e67;box-shadow:0 1px 3px #253e2010}
 @media(max-width:600px){.dataset-toolbar-left{gap:7px;flex-direction:column;align-items:flex-start}.scope-control button{font-size:9px;padding:5px 7px}.dataset-panel>.toolbar{gap:12px}.dataset-panel .search{max-width:44%;min-width:112px}}
 .backup-error{display:flex;align-items:flex-start;gap:6px;font-size:10px;line-height:1.7;color:#bc8165;margin-top:9px;overflow-wrap:anywhere}.backup-error svg{width:13px;height:13px;margin-top:2px}
-.dataset-tree .tree-toolbar{align-items:center;gap:16px;flex-wrap:wrap}.tree-toolbar-right{display:flex;align-items:center;gap:16px}.tree-toolbar-right>.text-button{white-space:nowrap;font-size:10px}.dataset-tree .tree-node{margin:0;border:0;border-top:1px solid var(--line);background:white}.dataset-tree>.tree-node:first-of-type{border-top:0}.dataset-tree .tree-node>summary{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:70px;padding:16px 20px;list-style:none;cursor:pointer}.tree-node>summary::-webkit-details-marker{display:none}.dataset-tree .tree-node[open]>summary{background:#f8fbf9;border-bottom:0}.tree-node-name{display:flex;align-items:center;gap:8px;min-width:0;color:#547260;font-size:12px}.tree-node-name>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tree-node-name>svg{width:14px;height:14px;color:#94ad9d}.tree-node-name>.tree-chevron{width:12px;height:12px;transition:transform .14s}.tree-node[open]>summary>.tree-node-name>.tree-chevron{transform:rotate(90deg)}.tree-child-count{font-size:9px;font-weight:400;color:#9bad9f;background:#f0f5f1;padding:1px 5px;border-radius:4px}.tree-row-end{display:flex;align-items:center;gap:12px;flex-shrink:0}.tree-rule-badge{font-size:10px;color:#6a967b;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tree-rule-badge.inherited{color:#8ca1b0}.tree-details{font-size:10px!important;min-height:28px!important;padding:5px 10px!important}.tree-row-end>.icon-button{width:27px;height:27px}.tree-row-end>.icon-button svg{width:13px;height:13px}.tree-children{margin:0 16px 16px 23px;padding-left:13px;border-left:1px solid #e4eee7}.tree-children>.tree-node:first-child{border-top:0}.snapshot-node-body{padding:16px 20px 18px;background:#fcfefd;border-top:1px solid #edf3ef}.node-rule{font-size:11px;color:#8ba293;margin-bottom:12px}.node-rule small{display:block;margin-top:3px;color:#9aada2;font-size:9px}.node-rule svg{width:13px;height:13px;margin-right:5px}.snapshot-node-body .mini-keep{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));max-width:490px;gap:7px}.snapshot-node-body .mini-keep>span{height:45px;gap:3px}.snapshot-node-body .mini-keep small{display:block;font-size:9px}.snapshot-node-body .mini-keep b{font-size:12px}.node-meta{display:flex;align-items:center;justify-content:space-between;gap:15px;font-size:10px;color:#98ac9f;margin-top:13px}.node-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:13px;margin-top:14px;border-top:1px solid #eaf1ec}.node-enable{display:flex;align-items:center;gap:10px;font-size:10px;color:#92a899}.node-controls .button{font-size:10px}.dataset-tree .backup-expanded{border-top:1px solid #edf3ef}.dataset-tree .backup-expanded .no-backup{padding-top:15px;padding-bottom:10px}.dataset-tree .backup-expanded .branch-note{background:#fcfefd}
-@media(max-width:600px){.dataset-tree .tree-toolbar{align-items:stretch;padding:14px;gap:11px}.tree-toolbar>.dataset-toolbar-left{width:100%;flex-direction:column;gap:8px}.tree-toolbar .scope-control{width:100%}.tree-toolbar .scope-control button{flex:1;white-space:nowrap;padding:6px 4px;font-size:9px}.tree-toolbar-right{width:100%;gap:14px}.tree-toolbar-right .search{width:auto;max-width:none;flex:1}.tree-toolbar-right>.text-button{font-size:9px}.dataset-tree .tree-node>summary{gap:8px;min-height:65px;padding:13px 12px}.tree-node-name{font-size:10px;gap:6px}.tree-node-name>svg{width:12px;height:12px}.tree-node-name>.tree-chevron{width:10px}.tree-row-end{gap:5px}.tree-rule-badge{display:none}.tree-row-end>.icon-button{width:24px;height:25px}.tree-details{font-size:9px!important;padding:4px 7px!important;min-height:26px!important}.tree-child-count{font-size:8px}.tree-children{margin:0 6px 10px 11px;padding-left:5px}.snapshot-node-body{padding:13px 12px}.node-rule{font-size:10px}.snapshot-node-body .mini-keep{gap:5px}.snapshot-node-body .mini-keep small{font-size:8px}.snapshot-node-body .mini-keep b{font-size:11px}.node-meta{font-size:9px;gap:8px;flex-wrap:wrap}.node-enable{font-size:9px;gap:6px}.node-controls .button{font-size:9px;padding:5px 7px}.node-controls{gap:8px}.node-controls .actions{gap:5px}}
+.dataset-tree .tree-toolbar{align-items:center;gap:16px;flex-wrap:wrap}
+.tree-toolbar-right{display:flex;align-items:center;gap:16px}
+.tree-toolbar-right>.text-button{white-space:nowrap;font-size:10px}
+.dataset-tree .tree-node{margin:0;border:0;border-top:1px solid var(--line);background:white}
+.dataset-tree>.tree-toolbar+.tree-node{border-top:0}
+.dataset-tree .tree-node>.tree-row{display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:44px;padding:6px 16px;list-style:none}
+.tree-branch>.tree-row{cursor:pointer}
+.tree-node>.tree-row::-webkit-details-marker{display:none}
+.dataset-tree .tree-node[open]>.tree-row{background:#f8fbf9;border-bottom:0}
+.tree-node>.tree-row:hover{background:#fafcfb}
+.tree-node-name{display:flex;align-items:center;gap:8px;min-width:0;color:#547260;font-size:12px}
+.tree-node-name>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-node-name>svg{width:14px;height:14px;color:#94ad9d;flex-shrink:0}
+.tree-node-name>.tree-chevron,.tree-chevron-space{width:12px;height:12px;flex:0 0 12px;transition:transform .14s}
+.tree-node[open]>.tree-row>.tree-node-name>.tree-chevron{transform:rotate(90deg)}
+.tree-child-count{font-size:9px;font-weight:400;color:#9bad9f;background:#f0f5f1;padding:1px 5px;border-radius:4px;flex-shrink:0}
+.tree-row-end{display:flex;align-items:center;gap:12px;flex-shrink:0}
+.tree-rule-badge{font-size:10px;color:#6a967b;max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tree-rule-badge.inherited{color:#8ca1b0}
+.tree-details{font-size:10px!important;min-height:28px!important;padding:5px 10px!important}
+.tree-row-end>.icon-button{width:27px;height:27px}
+.tree-row-end>.icon-button svg{width:13px;height:13px}
+.tree-children{margin:0 0 0 18px;padding:0;border-left:1px solid #e4eee7}
+.snapshot-node-body{padding:16px 18px;background:#fcfefd;border:1px solid var(--line);border-radius:8px}
+.node-rule{font-size:11px;color:#8ba293;margin-bottom:12px}
+.node-rule small{display:block;margin-top:3px;color:#9aada2;font-size:9px}
+.node-rule svg{width:13px;height:13px;margin-right:5px}
+.snapshot-node-body .mini-keep{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));max-width:490px;gap:7px}
+.snapshot-node-body .mini-keep>span{height:45px;gap:3px}
+.snapshot-node-body .mini-keep small{display:block;font-size:9px}
+.snapshot-node-body .mini-keep b{font-size:12px}
+.node-meta{display:flex;align-items:center;justify-content:space-between;gap:15px;font-size:10px;color:#98ac9f;margin-top:13px}
+.node-controls{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:13px;margin-top:14px;border-top:1px solid #eaf1ec}
+.node-enable{display:flex;align-items:center;gap:10px;font-size:10px;color:#92a899}
+.node-controls .button{font-size:10px}
+.dialog .backup-expanded{border:1px solid var(--line);border-radius:8px}
+@media(max-width:600px){
+ .dataset-tree .tree-toolbar{align-items:stretch;padding:14px;gap:11px}
+ .tree-toolbar>.dataset-toolbar-left{width:100%;flex-direction:column;gap:8px}
+ .tree-toolbar .scope-control{width:100%}
+ .tree-toolbar .scope-control button{flex:1;white-space:nowrap;padding:6px 4px;font-size:9px}
+ .tree-toolbar-right{width:100%;gap:14px}
+ .tree-toolbar-right .search{width:auto;max-width:none;flex:1}
+ .tree-toolbar-right>.text-button{font-size:9px}
+ .dataset-tree .tree-node>.tree-row{gap:8px;min-height:44px;padding:6px 10px}
+ .tree-node-name{font-size:11px;gap:6px}
+ .tree-node-name>svg{width:12px;height:12px}
+ .tree-node-name>.tree-chevron,.tree-chevron-space{width:10px;height:10px;flex-basis:10px}
+ .tree-row-end{gap:5px}
+ .tree-rule-badge{display:none}
+ .tree-row-end>.icon-button{width:24px;height:25px}
+ .tree-details{font-size:9px!important;padding:4px 7px!important;min-height:26px!important}
+ .tree-child-count{font-size:8px}
+ .tree-children{margin-left:10px}
+ .snapshot-node-body{padding:13px 12px}
+ .node-rule{font-size:10px}
+ .snapshot-node-body .mini-keep{gap:5px}
+ .snapshot-node-body .mini-keep small{font-size:8px}
+ .snapshot-node-body .mini-keep b{font-size:11px}
+ .node-meta{font-size:9px;gap:8px;flex-wrap:wrap}
+ .node-enable{font-size:9px;gap:6px}
+ .node-controls .button{font-size:9px;padding:5px 7px}
+ .node-controls{gap:8px}
+ .node-controls .actions{gap:5px}
+}

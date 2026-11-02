@@ -23,7 +23,7 @@ func TestBackupLifetimeUsesNextActualRunOnly(t *testing.T) {
 		{"month end recovers", "monthly", "2028-02-29T05:45:00+08:00", "2028-03-31T05:45:00+08:00"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			b := DefaultConfig(time.Now()).Backups[0]
+			b := customBackupForTest(DefaultConfig(time.Now()), 0)
 			b.Cadence, b.MonthDay = tc.cadence, 31
 			// Even legacy values cannot extend the new backup's lifetime.
 			b.KeepWeekly, b.KeepMonthly = 1000, 1000
@@ -83,7 +83,7 @@ func TestLegacyBackupCountsAreIgnoredAndOmittedWithoutRewritingOnLoad(t *testing
 
 func TestBackupSnapshotsAreIndependentOfLongSnapshotPolicies(t *testing.T) {
 	a := testApp(t)
-	b := a.config.Backups[0]
+	b := a.config.ResolveBackup(a.config.Backups[0])
 	loc, _ := time.LoadLocation(a.config.Timezone)
 	now := mustTime("2026-11-02T06:00:17+08:00")
 	source := b.Datasets[0].Source
@@ -122,7 +122,7 @@ func TestBackupSnapshotsAreIndependentOfLongSnapshotPolicies(t *testing.T) {
 
 func TestSuccessfulBackupPrunesExpiredSourcesAfterReplacingBase(t *testing.T) {
 	a := testApp(t)
-	b := a.config.Backups[0]
+	b := a.config.ResolveBackup(a.config.Backups[0])
 	now := time.Now()
 	if err := a.finishDemoBackupLocked(b, now); err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestLongBatchRefreshesBothExpiriesWithoutUnnecessaryCommands(t *testing.T) 
 	for _, remote := range []bool{false, true} {
 		t.Run(fmt.Sprint("ssh=", remote), func(t *testing.T) {
 			dir, log := retentionCommands(t)
-			b := DefaultConfig(time.Now()).Backups[0]
+			b := customBackupForTest(DefaultConfig(time.Now()), 0)
 			start := mustTime("2026-11-02T05:44:00+08:00")
 			finish := mustTime("2026-11-02T05:46:00+08:00")
 			oldNext, oldUntil := backupProtection(b, start.Location(), start)

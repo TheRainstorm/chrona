@@ -87,6 +87,8 @@ Cleanup follows successful snapshot creation or replication in the exact dataset
 
 Backups use ZFS send/receive, locally across pools or through an SSH host alias such as `backup-nas`. The service uses its account’s SSH keys/configuration and verified host keys, with connection reuse. Use `host: local` for a local receiver.
 
+Public `backup_policies` define timing only. Each `backups` entry chooses its own `host`, `port`, destination datasets and `policy` reference, so one schedule can serve local and remote targets. Select **Custom timing** for a schedule used only by that backup. Older combined rules migrate in memory without changing task IDs or incremental bases; saving writes the separated format.
+
 The weekly/monthly frequency controls **when a backup runs**. Backup snapshots have no weekly/monthly retention counts: each run creates a dedicated snapshot with the same expiry at both ends, **next scheduled backup + `grace_minutes`** (default 60 minutes). This is separate from dataset snapshot retention. Removing retention counts does not shorten existing snapshot expiries; obsolete `keep_weekly` / `keep_monthly` config keys are accepted but ignored and omitted on the next save.
 
 The core commands are `zfs send -w -p -i BASE NEW | zfs receive -u -s DEST`, with `-i BASE` omitted for the first full transfer. Each leaf dataset is transferred independently, without `-R`, intermediate-snapshot `-I`, or forced-receive `-F`.

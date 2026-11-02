@@ -32,10 +32,47 @@ func (a *App) scheduleNativeMaintenanceLocked(old, new Config) {
 		for _, b := range new.Backups {
 			newer[b.ID] = new.EffectiveBackup(b, inventory...)
 		}
+		// A grouped job may have been split while retaining the exact same target.
+		// Establish its new holds before retiring the old job's tags.
+		moved := map[string]bool{}
+		for _, oldTask := range old.Backups {
+			previous := old.EffectiveBackup(oldTask, inventory...)
+			for _, binding := range previous.Datasets {
+				for id, b := range newer {
+					if id == previous.ID {
+						continue
+					}
+					for _, nextBinding := range b.Datasets {
+						if !sameBackupTarget(previous, binding, b, nextBinding) {
+							continue
+						}
+						base := bases[id][binding.Source]
+						if base == "" {
+							continue
+						}
+						key := previous.ID + ":" + binding.Source
+						moved[key] = false
+						remoteName := binding.Destination + "@" + strings.SplitN(base, "@", 2)[1]
+						err := (nativeEndpoint{}).hold(ctx, base, nativeTag(id))
+						if err == nil {
+							err = a.endpoint(b).hold(ctx, remoteName, nativeTag(id))
+						}
+						if err != nil {
+							a.nativeWarning(id, fmt.Errorf("接管基点 hold 失败，原 hold 继续保留: %w", err))
+							continue
+						}
+						moved[key] = true
+					}
+				}
+			}
+		}
 		for _, oldTask := range old.Backups {
 			previous := old.EffectiveBackup(oldTask, inventory...)
 			next, exists := newer[previous.ID]
 			for _, binding := range previous.Datasets {
+				if safe, moving := moved[previous.ID+":"+binding.Source]; moving && !safe {
+					continue
+				}
 				keepTarget, keepSource := false, false
 				if exists {
 					for _, d := range next.Datasets {

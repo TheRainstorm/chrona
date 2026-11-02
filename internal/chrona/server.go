@@ -310,6 +310,7 @@ func (a *App) snapshotLocked(ctx context.Context, p Policy, event Event) error {
 }
 
 func (a *App) startBackupLocked(b Backup) error {
+	b = a.config.ResolveBackup(b)
 	active := []BackupDataset{}
 	for _, binding := range b.Datasets {
 		if binding.Disabled {
@@ -419,7 +420,7 @@ func (a *App) Handler(assets fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /api/backups/{id}", a.handleDeleteBackup)
 	mux.HandleFunc("POST /api/backups/{id}/run", a.handleRunBackup)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "mode": a.opts.Mode, "version": "0.9.1"})
+		writeJSON(w, 200, map[string]string{"status": "ok", "mode": a.opts.Mode, "version": "0.10.0"})
 	})
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	return authorize(a.opts.AuthSecret, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -475,7 +476,8 @@ func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
 		policies = append(policies, map[string]any{"policy": p, "next": next, "bindings": bindings})
 	}
 	backups := make([]map[string]any, 0, len(a.config.Backups))
-	for _, b := range a.config.Backups {
+	for _, task := range a.config.Backups {
+		b := a.config.ResolveBackup(task)
 		var next any
 		if b.Enabled {
 			next = NextBackup(b, loc, now)
@@ -840,8 +842,11 @@ func (a *App) handleSaveBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	normalized := NormalizeConfig(Config{Version: 2, Backups: []Backup{b}})
-	b = normalized.Backups[0]
+	// This endpoint saves concrete jobs, not public time definitions.
+	if b.Source != "" {
+		b.Datasets = append(b.Datasets, BackupDataset{Source: b.Source, Destination: b.Destination})
+		b.Source, b.Destination = "", ""
+	}
 	if a.state.Backups[b.ID].Status == "running" {
 		fail(w, 409, errors.New("请等待备份运行结束"))
 		return

@@ -118,7 +118,7 @@ func TestRetentionConstraintAndDisabledTiers(t *testing.T) {
 }
 
 func TestNextBackupHandlesWeekdaysAndCalendarMonthEnd(t *testing.T) {
-	b := DefaultConfig(time.Now()).Backups[0]
+	b := customBackupForTest(DefaultConfig(time.Now()), 0)
 	loc, _ := time.LoadLocation("Asia/Shanghai")
 	got := NextBackup(b, loc, mustTime("2026-11-02T05:45:00+08:00"))
 	if !got.Equal(mustTime("2026-11-06T05:45:00+08:00")) {

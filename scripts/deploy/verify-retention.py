@@ -109,8 +109,10 @@ def main():
         port = sock.getsockname()[1]
     base = 'http://127.0.0.1:' + str(port)
 
-    def api(route, method='GET'):
-        request = urllib.request.Request(base + route, method=method)
+    def api(route, method='GET', data=None):
+        payload = json.dumps(data).encode() if data is not None else None
+        request = urllib.request.Request(base + route, method=method, data=payload,
+                                         headers={'Content-Type': 'application/json'} if payload else {})
         with urllib.request.urlopen(request, timeout=40) as response:
             return json.load(response)
 
@@ -182,10 +184,11 @@ def main():
         config = {'version': 3, 'timezone': 'Asia/Shanghai', 'jitter_seconds': 0, 'policies': [],
                   'datasets': [managed(name) for name in [plain, keep_path] + [j['source'] for j in jobs]] +
                               [{'name': child, 'snapshot_mode': 'none'}],
+                  'backup_policies': [{'id': 'shared-time', 'name': 'Shared timing across receivers',
+                                       'cadence': 'monthly', 'weekdays': [1], 'month_day': 1,
+                                       'at': '23:00', 'grace_minutes': 60}],
                   'backups': [{'id': j['id'], 'name': j['id'], 'host': ssh_host if j['remote'] else 'local',
-                               'port': ssh_port if j['remote'] else 22, 'cadence': 'monthly',
-                               'weekdays': [1], 'month_day': 1, 'at': '23:00', 'enabled': False,
-                               'grace_minutes': 60,
+                               'port': ssh_port if j['remote'] else 22, 'policy': 'shared-time', 'enabled': False,
                                'datasets': [{'source': j['source'], 'destination': j['destination']}]}
                               for j in jobs]}
         (work / 'config.json').write_text(json.dumps(config, indent=2) + '\n')
@@ -206,6 +209,12 @@ def main():
             time.sleep(.1)
         else:
             raise RuntimeError('Candidate did not start')
+        loaded = api('/api/state')['config']
+        assert len(loaded['backup_policies']) == 1
+        assert not {'host', 'port', 'datasets'}.intersection(loaded['backup_policies'][0])
+        assert all(job['policy'] == 'shared-time' and 'cadence' not in job for job in loaded['backups'])
+        check('one timing-only policy is shared by independently configured local/SSH receivers')
+        buffer_minutes = 60
         items = {item['name']: item for item in api('/api/snapshots?' + urllib.parse.urlencode({'dataset': plain}))['items']}
         for name in (fresh, invalid):
             item = items[name]
@@ -235,7 +244,7 @@ def main():
             first = run_job(job)
             transfer = first['transfers'][job['source']]
             assert transfer['mode'] == 'incremental'
-            expected = int(datetime.datetime.fromisoformat(transfer['next_backup_at'].replace('Z', '+00:00')).timestamp()) + 60 * 60
+            expected = int(datetime.datetime.fromisoformat(transfer['next_backup_at'].replace('Z', '+00:00')).timestamp()) + buffer_minutes * 60
             assert int(prop(first['bases'][job['source']], 'chrona:expires')) == expected
             assert int(prop(transfer['remote_snapshot'], 'chrona:expires', job['remote'])) == expected
             check(job['id'] + ': both new backup expiries equal next run plus buffer despite year-long snapshot policy')
@@ -243,6 +252,36 @@ def main():
             assert not exists(job['destination'] + '@legacy-expired-seed', job['remote'])
             assert exists(job['keep']) and exists(job['destination'] + '@archive-KEEP', job['remote'])
             check(job['id'] + ': first incremental copy prunes expired legacy snapshots at both endpoints')
+            if job is jobs[0]:
+                before = api('/api/state')
+                update = before['config']
+                update['backup_policies'][0].update(month_day=2, at='22:15', grace_minutes=90)
+                api('/api/config', 'PUT', update)
+                after = api('/api/state')
+                assert before['config']['backups'] == after['config']['backups']
+                for old in before['backups']:
+                    new = next(row for row in after['backups'] if row['task']['id'] == old['task']['id'])
+                    assert new['task']['host'] == old['task']['host'] and new['task']['port'] == old['task']['port']
+                    assert new['task']['month_day'] == 2 and new['task']['at'] == '22:15' and new['task']['grace_minutes'] == 90
+                    for key in ('bases', 'completed'):
+                        assert new['state'].get(key) == old['state'].get(key)
+                # Native metadata maintenance is asynchronous; wait before forcing expiry
+                # into the past so that the following protection check cannot race it.
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    updated = next(row['state'] for row in api('/api/state')['backups'] if row['task']['id'] == job['id'])
+                    changed = updated['transfers'][job['source']]
+                    if changed['protected_until'] != transfer['protected_until']:
+                        next_run = datetime.datetime.fromisoformat(changed['next_backup_at'].replace('Z', '+00:00'))
+                        expires = datetime.datetime.fromisoformat(changed['protected_until'].replace('Z', '+00:00'))
+                        assert next_run.day == 2 and next_run.hour == 22 and next_run.minute == 15
+                        assert expires - next_run == datetime.timedelta(minutes=90)
+                        break
+                    time.sleep(.1)
+                else:
+                    raise RuntimeError('Shared policy maintenance did not update the existing base')
+                buffer_minutes = 90
+                check('editing shared timing updates both receivers without changing target mappings or common bases')
             base_name = first['bases'][job['source']]
             remote_base = transfer['remote_snapshot']
             for name, remote in [(base_name, False), (remote_base, job['remote'])]:
@@ -254,7 +293,7 @@ def main():
             second = run_job(job)
             transfer = second['transfers'][job['source']]
             assert transfer['mode'] == 'incremental'
-            expected = int(datetime.datetime.fromisoformat(transfer['next_backup_at'].replace('Z', '+00:00')).timestamp()) + 60 * 60
+            expected = int(datetime.datetime.fromisoformat(transfer['next_backup_at'].replace('Z', '+00:00')).timestamp()) + buffer_minutes * 60
             assert int(prop(second['bases'][job['source']], 'chrona:expires')) == expected
             assert int(prop(transfer['remote_snapshot'], 'chrona:expires', job['remote'])) == expected
             check(job['id'] + ': subsequent backup uses identical next-run expiry at both ends')

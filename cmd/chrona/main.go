@@ -63,7 +63,7 @@ func main() {
 		defer cancel()
 		_ = server.Shutdown(shutdown)
 	}()
-	log.Printf("Chrona 0.9.1 · %s mode · http://%s · config %s", *mode, listener.Addr(), *config)
+	log.Printf("Chrona 0.10.0 · %s mode · http://%s · config %s", *mode, listener.Addr(), *config)
 	if err = server.Serve(listener); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

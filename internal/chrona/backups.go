@@ -36,7 +36,7 @@ func (c Config) ResolveBackups(name string) []ResolvedBackup {
 	for _, task := range c.Backups {
 		for _, binding := range task.Datasets {
 			if binding.Source == name {
-				result = append(result, ResolvedBackup{Task: task, Binding: binding, Origin: name})
+				result = append(result, ResolvedBackup{Task: c.ResolveBackup(task), Binding: binding, Origin: name})
 			}
 		}
 	}
@@ -44,7 +44,7 @@ func (c Config) ResolveBackups(name string) []ResolvedBackup {
 }
 
 func (c Config) EffectiveBackup(task Backup, inventory ...Dataset) Backup {
-	result := task
+	result := c.ResolveBackup(task)
 	result.Datasets = []BackupDataset{}
 	for _, binding := range task.Datasets {
 		if c.IsLeafDataset(binding.Source, inventory...) {

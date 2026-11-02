@@ -84,6 +84,7 @@ type nativeResult struct {
 }
 
 func (a *App) runNativeBackup(ctx context.Context, c Config, b Backup) error {
+	b = c.ResolveBackup(b)
 	endpoint := a.endpoint(b)
 	results := []nativeResult{}
 	var total uint64
@@ -176,6 +177,7 @@ func (a *App) nativeWarning(id string, err error) {
 }
 
 func (a *App) nativeCopyLeaf(ctx context.Context, c Config, b Backup, receiver nativeEndpoint, binding BackupDataset, progress func(uint64)) (nativeResult, error) {
+	b = c.ResolveBackup(b)
 	result := nativeResult{binding: binding}
 	source := nativeEndpoint{}
 	if receiver.host == "" && (binding.Source == binding.Destination || strings.HasPrefix(binding.Destination, binding.Source+"/") || strings.HasPrefix(binding.Source, binding.Destination+"/")) {

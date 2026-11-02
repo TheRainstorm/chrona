@@ -10,7 +10,7 @@ import (
 func TestBackupPlansDoNotInheritOrExpandDestinationPaths(t *testing.T) {
 	c := inheritanceConfig()
 	c.Datasets = []DatasetConfig{{Name: "tank/home", Policy: "test"}}
-	task := DefaultConfig(time.Now()).Backups[0]
+	task := customBackupForTest(DefaultConfig(time.Now()), 0)
 	task.Datasets = []BackupDataset{{Source: "tank/home/apps", Destination: "remote/apps"}}
 	c.Backups = []Backup{task}
 	inventory := []Dataset{{Name: "tank/home"}, {Name: "tank/home/apps"}, {Name: "tank/home/apps/photos"}, {Name: "tank/home/apps/docs"}}
@@ -45,7 +45,7 @@ func TestBackupPlansDoNotInheritOrExpandDestinationPaths(t *testing.T) {
 }
 
 func TestBackupExpiryCoversCalendarNextRunPlusBuffer(t *testing.T) {
-	b := DefaultConfig(time.Now()).Backups[0]
+	b := customBackupForTest(DefaultConfig(time.Now()), 0)
 	b.Cadence = "monthly"
 	b.MonthDay = 31
 	b.At = "05:45"
@@ -69,7 +69,7 @@ func TestBackupExpiryCoversCalendarNextRunPlusBuffer(t *testing.T) {
 
 func TestDemoBackupWritesReceiverExpiryAndRequiresACommonBase(t *testing.T) {
 	a := testApp(t)
-	b := a.config.Backups[0]
+	b := customBackupForTest(a.config, 0)
 	b.KeepWeekly = 0
 	b.KeepMonthly = 1
 	b.GraceMinutes = 120
@@ -164,16 +164,16 @@ func TestScheduleEditExtendsExistingCommonBaseExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := NormalizeConfig(a.config)
-	c.Backups[0].Cadence = "monthly"
-	c.Backups[0].MonthDay = 28
-	c.Backups[0].GraceMinutes = 180
+	c.BackupPolicies[0].Cadence = "monthly"
+	c.BackupPolicies[0].MonthDay = 28
+	c.BackupPolicies[0].GraceMinutes = 180
 	before := a.state.Backups[b.ID].Bases[b.Datasets[0].Source]
 	payload, _ := json.Marshal(c)
 	if w := perform(a, "PUT", "/api/config", string(payload)); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	state := a.state.Backups[b.ID]
-	next, until := backupProtection(c.Backups[0], time.FixedZone("CST", 8*3600), time.Now().Add(-time.Second))
+	next, until := backupProtection(c.ResolveBackup(c.Backups[0]), time.FixedZone("CST", 8*3600), time.Now().Add(-time.Second))
 	if state.Bases[b.Datasets[0].Source] != before || state.Transfers[b.Datasets[0].Source].ProtectedUntil.Before(until.Add(-time.Second)) {
 		t.Fatal("schedule edit lost or shortened the common base", next, state)
 	}

@@ -31,6 +31,10 @@ func NormalizeConfig(c Config) Config {
 	}
 	r := c
 	r.Policies = append([]Policy{}, c.Policies...)
+	r.BackupPolicies = append([]BackupPolicy{}, c.BackupPolicies...)
+	for i := range r.BackupPolicies {
+		r.BackupPolicies[i].Weekdays = append([]int{}, c.BackupPolicies[i].Weekdays...)
+	}
 	r.Backups = append([]Backup{}, c.Backups...)
 	r.Datasets = append([]DatasetConfig{}, c.Datasets...)
 	for i := range r.Datasets {
@@ -47,6 +51,11 @@ func NormalizeConfig(c Config) Config {
 		r.Backups[i].Datasets = append([]BackupDataset{}, r.Backups[i].Datasets...)
 		r.Backups[i].KeepWeekly = 0
 		r.Backups[i].KeepMonthly = 0
+		r.Backups[i].Weekdays = append([]int{}, r.Backups[i].Weekdays...)
+		r.Backups[i].PolicyName = ""
+		if r.Backups[i].Host == "local" && r.Backups[i].Port == 0 {
+			r.Backups[i].Port = 22
+		}
 	}
 	if c.Version == 2 {
 		for i, p := range r.Policies {
@@ -74,6 +83,9 @@ func NormalizeConfig(c Config) Config {
 	}
 	for i := range r.Policies {
 		r.Policies[i].Enabled = true
+	}
+	if c.BackupPolicies == nil {
+		migrateLegacyBackupPolicies(&r)
 	}
 	return r
 }
@@ -229,13 +241,14 @@ func (c Config) MarshalYAML() (any, error) {
 		policies = append(policies, rule{p.ID, p.Label, p.StartAt, p.Keep})
 	}
 	return struct {
-		Version       int             `yaml:"version"`
-		Timezone      string          `yaml:"timezone"`
-		JitterSeconds int             `yaml:"jitter_seconds"`
-		Policies      []rule          `yaml:"policies"`
-		Datasets      []DatasetConfig `yaml:"datasets"`
-		Backups       []Backup        `yaml:"backups"`
-	}{c.Version, c.Timezone, c.JitterSeconds, policies, c.Datasets, c.Backups}, nil
+		Version        int             `yaml:"version"`
+		Timezone       string          `yaml:"timezone"`
+		JitterSeconds  int             `yaml:"jitter_seconds"`
+		Policies       []rule          `yaml:"policies"`
+		Datasets       []DatasetConfig `yaml:"datasets"`
+		BackupPolicies []BackupPolicy  `yaml:"backup_policies"`
+		Backups        []Backup        `yaml:"backups"`
+	}{c.Version, c.Timezone, c.JitterSeconds, policies, c.Datasets, c.BackupPolicies, c.Backups}, nil
 }
 
 // Inventory rows are visible without registering them or enabling scheduling.

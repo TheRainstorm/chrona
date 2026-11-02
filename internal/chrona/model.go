@@ -41,18 +41,31 @@ type BackupDataset struct {
 	Disabled    bool   `json:"disabled,omitempty" yaml:"disabled,omitempty"`
 }
 
+// A shared backup policy contains time settings only; destinations belong to jobs.
+type BackupPolicy struct {
+	ID           string `json:"id" yaml:"id"`
+	Name         string `json:"name" yaml:"name"`
+	Cadence      string `json:"cadence" yaml:"cadence"`
+	Weekdays     []int  `json:"weekdays" yaml:"weekdays"`
+	MonthDay     int    `json:"month_day" yaml:"month_day"`
+	At           string `json:"at" yaml:"at"`
+	GraceMinutes int    `json:"grace_minutes,omitempty" yaml:"grace_minutes,omitempty"`
+}
+
 type Backup struct {
 	ID          string          `json:"id" yaml:"id"`
-	Name        string          `json:"name" yaml:"name"`
+	Name        string          `json:"name,omitempty" yaml:"name,omitempty"`
+	Policy      string          `json:"policy,omitempty" yaml:"policy,omitempty"`
+	PolicyName  string          `json:"policy_name,omitempty" yaml:"-"`
 	Source      string          `json:"source,omitempty" yaml:"source,omitempty"` // v1 input only
 	Datasets    []BackupDataset `json:"datasets" yaml:"datasets"`
 	Host        string          `json:"host" yaml:"host"`
 	Port        int             `json:"port" yaml:"port"`
 	Destination string          `json:"destination,omitempty" yaml:"destination,omitempty"` // v1 input only
-	Cadence     string          `json:"cadence" yaml:"cadence"`
-	Weekdays    []int           `json:"weekdays" yaml:"weekdays"`
-	MonthDay    int             `json:"month_day" yaml:"month_day"`
-	At          string          `json:"at" yaml:"at"`
+	Cadence     string          `json:"cadence,omitempty" yaml:"cadence,omitempty"`
+	Weekdays    []int           `json:"weekdays,omitempty" yaml:"weekdays,omitempty"`
+	MonthDay    int             `json:"month_day,omitempty" yaml:"month_day,omitempty"`
+	At          string          `json:"at,omitempty" yaml:"at,omitempty"`
 	Enabled     bool            `json:"enabled" yaml:"enabled"`
 	// Deprecated input fields: NormalizeConfig discards historical retention counts.
 	KeepWeekly   int  `json:"keep_weekly,omitempty" yaml:"keep_weekly,omitempty"`
@@ -62,12 +75,13 @@ type Backup struct {
 }
 
 type Config struct {
-	Version       int             `json:"version" yaml:"version"`
-	Timezone      string          `json:"timezone" yaml:"timezone"`
-	JitterSeconds int             `json:"jitter_seconds" yaml:"jitter_seconds"`
-	Policies      []Policy        `json:"policies" yaml:"policies"`
-	Backups       []Backup        `json:"backups" yaml:"backups"`
-	Datasets      []DatasetConfig `json:"datasets" yaml:"datasets"`
+	Version        int             `json:"version" yaml:"version"`
+	Timezone       string          `json:"timezone" yaml:"timezone"`
+	JitterSeconds  int             `json:"jitter_seconds" yaml:"jitter_seconds"`
+	Policies       []Policy        `json:"policies" yaml:"policies"`
+	BackupPolicies []BackupPolicy  `json:"backup_policies" yaml:"backup_policies"`
+	Backups        []Backup        `json:"backups" yaml:"backups"`
+	Datasets       []DatasetConfig `json:"datasets" yaml:"datasets"`
 }
 
 var datasetPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.:-]*(/[A-Za-z0-9_.:%-]+)*$`)
@@ -174,7 +188,7 @@ func ValidateConfig(c Config) error {
 	if c.JitterSeconds < 0 || c.JitterSeconds > 300 {
 		return errors.New("随机偏移必须在 0～300 秒之间")
 	}
-	if len(c.Policies) > 200 || len(c.Backups) > 100 {
+	if len(c.Policies) > 200 || len(c.BackupPolicies) > 100 || len(c.Backups) > 100 {
 		return errors.New("Demo 最多支持 200 个快照策略和 100 个备份任务")
 	}
 	ids, datasets := map[string]bool{}, map[string]bool{}
@@ -206,12 +220,34 @@ func ValidateConfig(c Config) error {
 		}
 	}
 	ids = map[string]bool{}
+	for _, p := range c.BackupPolicies {
+		if ids[p.ID] {
+			return errors.New("备份时间策略 ID 不能重复")
+		}
+		ids[p.ID] = true
+		if err := ValidateBackupPolicy(p); err != nil {
+			return err
+		}
+	}
+	ids = map[string]bool{}
 	for _, b := range c.Backups {
 		if ids[b.ID] {
 			return errors.New("备份 ID 不能重复")
 		}
 		ids[b.ID] = true
-		if err := ValidateBackup(b); err != nil {
+		if b.Policy != "" {
+			if b.Cadence != "" || len(b.Weekdays) > 0 || b.MonthDay != 0 || b.At != "" || b.GraceMinutes != 0 {
+				return errors.New("引用公共备份时间策略时不能同时设置独立时间")
+			}
+			found := false
+			for _, p := range c.BackupPolicies {
+				found = found || p.ID == b.Policy
+			}
+			if !found {
+				return fmt.Errorf("备份 %s 引用的时间策略 %s 不存在", b.ID, b.Policy)
+			}
+		}
+		if err := ValidateBackup(c.ResolveBackup(b)); err != nil {
 			return err
 		}
 		for _, binding := range b.Datasets {
@@ -268,14 +304,11 @@ func ValidatePolicy(p Policy) error {
 }
 
 func ValidateBackup(b Backup) error {
-	if b.GraceMinutes < 0 || b.GraceMinutes > 10080 {
-		return errors.New("备份缓冲时间必须在 1～10080 分钟之间；省略时默认 60 分钟")
-	}
 	if !idPattern.MatchString(b.ID) {
 		return errors.New("备份 ID 无效")
 	}
-	if b.Name == "" || len(b.Name) > 160 {
-		return errors.New("请填写备份名称")
+	if len(b.Name) > 160 {
+		return errors.New("备份名称最长 160 字节")
 	}
 	if b.Private && len(b.Datasets) != 1 {
 		return errors.New("独立备份策略必须且只能属于一个数据集")
@@ -293,6 +326,23 @@ func ValidateBackup(b Backup) error {
 	}
 	if !hostPattern.MatchString(b.Host) || b.Port < 1 || b.Port > 65535 {
 		return errors.New("请填写有效的 SSH 主机和端口")
+	}
+	return validateBackupTime(b)
+}
+
+func ValidateBackupPolicy(p BackupPolicy) error {
+	if !idPattern.MatchString(p.ID) {
+		return errors.New("备份时间策略 ID 无效")
+	}
+	if strings.TrimSpace(p.Name) == "" || len(p.Name) > 160 {
+		return errors.New("请填写备份时间策略名称（最长 160 字节）")
+	}
+	return validateBackupTime(p.apply(Backup{}))
+}
+
+func validateBackupTime(b Backup) error {
+	if b.GraceMinutes < 0 || b.GraceMinutes > 10080 {
+		return errors.New("备份缓冲时间必须在 1～10080 分钟之间；省略时默认 60 分钟")
 	}
 	if _, err := time.Parse("15:04", b.At); err != nil {
 		return errors.New("备份时间格式应为 HH:MM")

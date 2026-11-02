@@ -37,6 +37,7 @@ func (a *App) pruneReplicasLocked(now time.Time) {
 // Stage both receiver metadata and all new bases, then commit them together.
 // A failure leaves the previous common snapshots protected on both sides.
 func (a *App) finishDemoBackupLocked(b Backup, now time.Time) error {
+	b = a.config.ResolveBackup(b)
 	loc, _ := time.LoadLocation(a.config.Timezone)
 	next, until := backupProtection(b, loc, now)
 	previous := a.state.Backups[b.ID]
@@ -152,9 +153,13 @@ func withoutHold(holds []string, id string) []string {
 
 // Native ZFS holds are modeled separately from the single expiry property.
 func (a *App) syncBackupHoldsLocked() {
-	for _, b := range a.config.Backups {
+	a.syncBackupHoldsForConfigLocked(a.config)
+}
+
+func (a *App) syncBackupHoldsForConfigLocked(c Config) {
+	for _, b := range c.Backups {
 		bases := a.state.Backups[b.ID].Bases
-		effective := a.config.EffectiveBackup(b, a.datasets...).Datasets
+		effective := c.EffectiveBackup(b, a.datasets...).Datasets
 		for i := range a.state.Snapshots {
 			s := &a.state.Snapshots[i]
 			s.HeldBy = withoutHold(s.HeldBy, b.ID)

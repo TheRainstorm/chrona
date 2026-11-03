@@ -34,7 +34,7 @@ Each backup destination has its own target, timing policy and enable switch:
 Download from [Releases](https://github.com/TheRainstorm/chrona/releases). Choose `amd64` for x86_64 or `arm64` for aarch64. Each archive includes the standalone binary, systemd unit, example configuration, documentation and license. The target needs Linux, OpenZFS tools (`zfs`, `zpool`), systemd and an SSH client for remote backups; Go is not required.
 
 ```sh
-chrona_version=0.11.0
+chrona_version=0.11.1
 chrona_arch=amd64                 # or arm64
 chrona_archive="chrona_${chrona_version}_linux_${chrona_arch}.tar.gz"
 chrona_url="https://github.com/TheRainstorm/chrona/releases/download/v${chrona_version}"
@@ -130,7 +130,7 @@ Expiry rules also cover existing snapshots:
 - Otherwise, a valid `chrona:expires` Unix timestamp is respected, including on snapshots created by other tools.
 - Without a valid explicit expiry, the default is **creation time + 30 days**. This is calculated without rewriting legacy snapshot properties.
 
-Cleanup follows successful snapshot creation or replication in the exact dataset. Holds and recorded incremental bases are protected; an uninitialized backup source defers cleanup until its common base is known. Deletion rechecks snapshot identity, expiry and holds, and never uses recursive or forced deletion.
+Cleanup runs after snapshot creation, successful replication, or the initial receiver check, within that exact dataset. Holds and recorded incremental bases are protected; before the first transfer, existing receivers are checked in the background and their shared base is held. An unreachable receiver or unfinished receive temporarily defers source cleanup; pending checks retry every 15 minutes without adding SSH calls to page refreshes. Deletion rechecks snapshot identity, expiry and holds, and never uses recursive or forced deletion.
 
 ## Native replication
 
@@ -150,7 +150,7 @@ Incremental transfers require the receiver’s latest snapshot GUID to exist at 
 
 GitHub Actions tests pull requests and `main` pushes, then cross-compiles static Linux `amd64` and `arm64` binaries. Pushing a `v*` version tag runs the checks and publishes both archives with `SHA256SUMS` to GitHub Releases. Each package records its version, commit and Go toolchain in `BUILDINFO.txt`; `chrona -version` reports the running build. CI publishes release files; updating a server remains an explicit deployment step.
 
-From a source checkout, to produce the same packages locally, run `./scripts/release.sh v0.11.0`; output is written to `dist/`. The release build uses `CGO_ENABLED=0`, so it needs no external C runtime.
+From a source checkout, to produce the same packages locally, run `./scripts/release.sh v0.11.1`; output is written to `dist/`. The release build uses `CGO_ENABLED=0`, so it needs no external C runtime.
 
 ## Development
 

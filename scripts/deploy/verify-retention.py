@@ -20,6 +20,7 @@ import stat
 import socket
 import subprocess
 import time
+import traceback
 import urllib.parse
 import urllib.request
 import uuid
@@ -179,11 +180,12 @@ def main():
             seed_receive(permanent, destination, remote, old)
             common = snapshot(source, 'legacy-common', past)
             seed_receive(common, destination, remote, permanent)
+            expired_hourly = snapshot(source, 'chrona_20261102T120000Z', past)
             jobs.append({'id': 'retention-' + kind, 'source': source, 'destination': destination,
-                         'remote': remote, 'old': old, 'keep': permanent, 'common': common})
+                         'remote': remote, 'old': old, 'keep': permanent, 'common': common, 'expired_hourly': expired_hourly})
         now = datetime.datetime.now(datetime.timezone.utc)
         def managed(dataset):
-            return {'name': dataset, 'disabled': True, 'snapshot': {
+            return {'name': dataset, 'disabled': dataset not in [job['source'] for job in jobs], 'snapshot': {
                 'start_at': now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
                 'keep': {'quarter_hourly': 0, 'hourly': 0, 'daily': 0, 'weekly': 0, 'monthly': 12} if dataset in [job['source'] for job in jobs] else {'quarter_hourly': 0, 'hourly': 3, 'daily': 7, 'weekly': 0, 'monthly': 0}}}
         config = {'version': 3, 'timezone': 'Asia/Shanghai', 'jitter_seconds': 0, 'policies': [],
@@ -226,6 +228,23 @@ def main():
         if use_ssh_config:
             assert all('port' not in job for job in loaded['backups'] if job['host'] == ssh_host)
             check('SSH alias keeps its application port omitted and delegates connection settings to OpenSSH')
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
+            state = api('/api/state')
+            if all((next(row['state'] for row in state['backups'] if row['task']['id'] == job['id']).get('bases') or {}).get(job['source']) == job['common'] for job in jobs):
+                break
+            time.sleep(.1)
+        else:
+            raise RuntimeError('Imported common bases were not initialized before the first backup')
+        for job in jobs:
+            pending = next(row['state'] for row in state['backups'] if row['task']['id'] == job['id'])
+            assert pending['last_success'].startswith('0001') and pending['status'] != 'success'
+            assert not exists(job['expired_hourly']) and not exists(job['old'])
+            assert exists(job['common']) and exists(job['keep'])
+            assert 'chrona:' + job['id'] in cmd(['zfs', 'holds', '-H', job['common']]).stdout
+            remote_common = job['destination'] + '@legacy-common'
+            assert 'chrona:' + job['id'] in cmd(['zfs', 'holds', '-H', remote_common], job['remote']).stdout
+            check(job['id'] + ': before any backup, startup prunes expired hourly snapshots and holds only the imported common base')
         buffer_minutes = 60
         items = {item['name']: item for item in api('/api/snapshots?' + urllib.parse.urlencode({'dataset': plain}))['items']}
         for name in (fresh, invalid):
@@ -251,8 +270,8 @@ def main():
         check('keep in dataset path does not protect an ordinary snapshot suffix')
         for job in jobs:
             manual(job['source'])
-            assert exists(job['old']) and exists(job['common'])
-            check(job['id'] + ': unregistered common seed survives source cleanup before first backup')
+            assert not exists(job['old']) and exists(job['common'])
+            check(job['id'] + ': imported common base survives normal source cleanup before first backup')
             first = run_job(job)
             transfer = first['transfers'][job['source']]
             assert transfer['mode'] == 'incremental'
@@ -276,7 +295,7 @@ def main():
                     assert new['task']['host'] == old['task']['host'] and new['task'].get('port', 0) == old['task'].get('port', 0)
                     assert new['task']['month_day'] == 2 and new['task']['at'] == '22:15' and new['task']['grace_minutes'] == 90
                     for key in ('bases', 'completed'):
-                        assert new['state'].get(key) == old['state'].get(key)
+                        assert (new['state'].get(key) or {}) == (old['state'].get(key) or {})
                 # Native metadata maintenance is asynchronous; wait before forcing expiry
                 # into the past so that the following protection check cannot race it.
                 deadline = time.monotonic() + 30
@@ -317,7 +336,7 @@ def main():
         report['status'] = 'passed'
     except Exception as error:
         report['status'] = 'failed'
-        report['error'] = str(error)
+        report['error'] = traceback.format_exc()
         raise
     finally:
         if process is not None:

@@ -176,7 +176,7 @@ case "$1" in
   ;;
  holds) printf '%s\tforeign\t1\n' "$last";;
  get) printf '%s\n' '-';;
- destroy|release|set) ;;
+ destroy|release|set|hold) ;;
  *) exit 1;;
 esac
 `

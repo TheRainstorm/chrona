@@ -31,20 +31,22 @@ type Options struct {
 	AuthSecret, SSHControlDir   string
 }
 type App struct {
-	closing       bool
-	mu            sync.RWMutex
-	config        Config
-	state         State
-	opts          Options
-	pools         []Pool
-	datasets      []Dataset
-	started       time.Time
-	hostname      string
-	lastCheck     time.Time
-	workerCtx     context.Context
-	cancelWorkers context.CancelFunc
-	workers       sync.WaitGroup
-	configHash    [32]byte
+	closing          bool
+	mu               sync.RWMutex
+	config           Config
+	state            State
+	opts             Options
+	pools            []Pool
+	datasets         []Dataset
+	started          time.Time
+	hostname         string
+	lastCheck        time.Time
+	workerCtx        context.Context
+	cancelWorkers    context.CancelFunc
+	workers          sync.WaitGroup
+	configHash       [32]byte
+	baseCheckRunning bool
+	nextBaseCheck    time.Time
 }
 
 func NewApp(opts Options) (*App, error) {
@@ -165,6 +167,9 @@ func NewApp(opts Options) (*App, error) {
 			return nil, err
 		}
 	}
+	a.mu.Lock()
+	a.scheduleNativeBaseInitializationLocked(time.Now())
+	a.mu.Unlock()
 	return a, nil
 }
 
@@ -244,6 +249,7 @@ func (a *App) Run(ctx context.Context) {
 				if err := a.refreshRealLocked(ctx); err != nil {
 					a.record("error", "inventory", "", err.Error())
 				}
+				a.scheduleNativeBaseInitializationLocked(time.Now())
 				a.mu.Unlock()
 			}
 		case <-reload.C:
@@ -279,14 +285,23 @@ func (a *App) snapshotLocked(ctx context.Context, p Policy, event Event) error {
 		a.state.Snapshots = append(a.state.Snapshots, Snapshot{Name: name, Dataset: p.Dataset, CreatedAt: time.Now(), ExpiresAt: event.ExpiresAt, Tier: event.Tier, Used: mockBytes(name), HeldBy: []string{}, Managed: true})
 	}
 	a.record("success", "snapshot", p.Dataset, fmt.Sprintf("%s档快照已创建 · %d 档合并 · 到期 %s", event.Label, len(event.Merged), event.ExpiresAt.Format("01-02 15:04")))
-	// Only clean this exact dataset after the new snapshot has succeeded.
+	a.pruneSnapshotDatasetLocked(ctx, p.Dataset)
+	a.persistLocked()
+	return nil
+}
+
+// The caller has either created a snapshot or verified its receiver baseline.
+func (a *App) pruneSnapshotDatasetLocked(ctx context.Context, dataset string) {
+	if a.opts.Mode == "zfs" && !a.opts.AllowWrites {
+		return
+	}
 	kept := make([]Snapshot, 0, len(a.state.Snapshots))
 	pruned := 0
 	protected := a.protectedSnapshotNamesLocked()
-	deferCleanup := a.hasUninitializedBackupLocked(p.Dataset)
+	deferCleanup := a.hasUninitializedBackupLocked(dataset)
 	for _, s := range a.state.Snapshots {
 		s = withSnapshotRetention(s)
-		if !deferCleanup && s.Dataset == p.Dataset && !protected[s.Name] && snapshotExpired(s, time.Now()) {
+		if !deferCleanup && s.Dataset == dataset && !protected[s.Name] && snapshotExpired(s, time.Now()) {
 			if a.opts.Mode == "zfs" {
 				deleted, err := destroyRealSnapshot(ctx, s)
 				if err != nil {
@@ -305,10 +320,8 @@ func (a *App) snapshotLocked(ctx context.Context, p Policy, event Event) error {
 	a.state.Snapshots = kept
 	sortSnapshots(a.state.Snapshots)
 	if pruned > 0 {
-		a.record("success", "prune", p.Dataset, fmt.Sprintf("已清理 %d 张到期快照", pruned))
+		a.record("success", "prune", dataset, fmt.Sprintf("已清理 %d 张到期快照", pruned))
 	}
-	a.persistLocked()
-	return nil
 }
 
 func (a *App) startBackupLocked(b Backup) error {

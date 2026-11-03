@@ -115,15 +115,15 @@ func (a *App) protectedSnapshotNamesLocked() map[string]bool {
 	return protected
 }
 
-// Before the first successful backup, a peer may depend on an old unregistered
-// snapshot. Defer source cleanup until each configured destination has a base.
+// An unchecked peer may depend on an imported snapshot. Startup discovers and
+// pins only that shared base; a checked empty receiver does not block cleanup.
 func (a *App) hasUninitializedBackupLocked(dataset string) bool {
 	if !a.config.IsLeafDataset(dataset, a.datasets...) {
 		return false
 	}
 	for _, task := range a.config.Backups {
 		for _, binding := range task.Datasets {
-			if binding.Source == dataset && !strings.HasPrefix(a.state.Backups[task.ID].Bases[dataset], dataset+"@") {
+			if binding.Source == dataset && !backupBaseChecked(a.state.Backups[task.ID], dataset) {
 				return true
 			}
 		}

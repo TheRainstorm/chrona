@@ -34,7 +34,7 @@ Chrona 是一个 Go 可执行文件，内置 HTML/CSS/JavaScript 界面，无需
 从 [Releases](https://github.com/TheRainstorm/chrona/releases) 下载：x86_64 选 `amd64`，aarch64 选 `arm64`。压缩包内含单文件程序、systemd 服务文件、示例配置、文档和许可证。目标机器需要 Linux、OpenZFS 工具（`zfs`、`zpool`）、systemd，远端备份还需要 SSH 客户端；无需安装 Go。
 
 ```sh
-chrona_version=0.11.0
+chrona_version=0.11.1
 chrona_arch=amd64                 # ARM 机器改为 arm64
 chrona_archive="chrona_${chrona_version}_linux_${chrona_arch}.tar.gz"
 chrona_url="https://github.com/TheRainstorm/chrona/releases/download/v${chrona_version}"
@@ -130,7 +130,7 @@ backups: []
 - 其他快照如果有有效的 `chrona:expires` Unix 时间戳，就遵守这个期限，包括其他工具创建的快照。
 - 没有有效到期属性时，默认按**创建时间加 30 天**计算，无需批量改写旧快照的属性。
 
-清理只在成功创建快照或完成复制后处理当前精确数据集。已有 hold 和记录中的增量基点受保护；尚未确认共同基点的备份源会暂缓清理。删除前重新核对快照身份、期限和 hold，不递归、不强制删除。
+清理在成功创建快照、完成复制或首次核对接收端后处理当前精确数据集。已有 hold 和记录中的增量基点受保护；首次传输前会在后台核对已有接收端，并用 hold 保护公共基点；接收端不可达或有未完成的续传时会暂缓源端清理，每 15 分钟重试，不随页面刷新额外调用 SSH。删除前重新核对快照身份、期限和 hold，不递归、不强制删除。
 
 ## 原生增量备份
 
@@ -150,7 +150,7 @@ backups: []
 
 GitHub Actions 会检查 PR 和 `main` 推送，并交叉编译 Linux `amd64`、`arm64` 静态程序。推送 `v*` 版本标签后，通过检查的两个架构压缩包及 `SHA256SUMS` 会自动发布到 GitHub Releases。包内 `BUILDINFO.txt` 记录版本、commit 和 Go 工具链，运行 `chrona -version` 可查看版本信息。CI 负责发布文件，服务器升级仍由部署操作控制。
 
-在源码仓库中运行 `./scripts/release.sh v0.11.0` 生成同样的发布包，输出在 `dist/`。构建使用 `CGO_ENABLED=0`，不依赖外部 C 运行库。
+在源码仓库中运行 `./scripts/release.sh v0.11.1` 生成同样的发布包，输出在 `dist/`。构建使用 `CGO_ENABLED=0`，不依赖外部 C 运行库。
 
 ## 开发
 

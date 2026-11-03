@@ -37,7 +37,7 @@ func (a *App) reconcileBackupsLocked(old, new Config) {
 				changed = true
 				continue
 			}
-			if base := state.Bases[source]; base != "" {
+			if base, checked := state.Bases[source]; checked {
 				bases[source] = base
 			}
 			if at, ok := state.Completed[source]; ok {
@@ -80,7 +80,10 @@ func (a *App) reconcileBackupsLocked(old, new Config) {
 				continue
 			}
 			previous := oldStates[previousID]
-			base := previous.Bases[binding.Source]
+			base, checked := previous.Bases[binding.Source]
+			if checked {
+				state.Bases[binding.Source] = base
+			}
 			if base == "" {
 				continue
 			}
@@ -110,6 +113,7 @@ func (a *App) reconcileBackupsLocked(old, new Config) {
 	}
 	if a.opts.Mode != "demo" {
 		a.scheduleNativeMaintenanceLocked(old, new)
+		a.nextBaseCheck = time.Time{}
 		return
 	}
 	for i := range a.state.Snapshots {
